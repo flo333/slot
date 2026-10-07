@@ -470,6 +470,7 @@ fn changing_the_ini_mid_session_does_not_move_a_seated_carts_autosave() {
     std::fs::remove_file(d.path().join(SELECTED_CORE_FILE)).unwrap();
 
     s.app_mut().tick_ms(60_000);
+    slot::persist::settle();
 
     assert!(
         StateRing::new(d.path(), Platform::Gba, Core::Gpsp, "Emerald")

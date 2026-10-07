@@ -936,6 +936,7 @@ impl App {
     }
 
     pub fn restart(&mut self) {
+        persist::settle();
         if let Some(power) = &mut self.power {
             power.restart();
         }
@@ -1030,6 +1031,7 @@ impl App {
     }
 
     pub fn poweroff(&mut self) {
+        persist::settle();
         if let Some(power) = &mut self.power {
             power.poweroff();
         }
@@ -1462,7 +1464,7 @@ impl App {
             self.on_doze_timeout();
         }
         if self.now() >= self.autosave_at {
-            self.flush_resume();
+            self.save_resume(false);
         }
         if self.now() >= self.battery_at {
             self.battery_at = self.now() + BATTERY_POLL_MS;
@@ -1571,6 +1573,7 @@ impl App {
             return;
         };
         let ring = StateRing::new(root, self.platform, self.core, stem);
+        persist::settle();
         match ring.retire_resume(&format_stamp(self.wall_secs())) {
             Ok(Some(to)) => eprintln!(
                 "slot: resume: {} refused this state, moved it to {}",
@@ -2671,6 +2674,10 @@ impl App {
     }
 
     pub fn flush_resume(&mut self) {
+        self.save_resume(true);
+    }
+
+    fn save_resume(&mut self, durable: bool) {
         self.autosave_at = self.now() + AUTOSAVE_MS;
         let (Some(root), Some(snapshot), Some(cart)) = (&self.root, &self.snapshot, self.seated())
         else {
@@ -2681,6 +2688,9 @@ impl App {
             return;
         };
         let (state, sav) = trusted_write(snapshot.as_ref(), state, "flush");
+        if !durable {
+            return persist::flush_later(root, self.platform, self.core, cart, state, sav);
+        }
         if let Err(e) = persist::flush(
             root,
             self.platform,

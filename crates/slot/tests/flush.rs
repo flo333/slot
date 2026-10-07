@@ -42,6 +42,7 @@ fn autosave_fires_at_sixty_seconds_and_not_before() {
             .is_none()
     );
     a.tick_ms(60_000);
+    persist::settle();
     assert!(
         StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
             .read_resume()
@@ -173,6 +174,22 @@ fn a_flush_resets_the_autosave_clock() {
     );
     a.tick_ms(90_000);
     assert_eq!(flushes.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn a_late_autosave_never_lands_over_a_newer_durable_flush() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let (snapshot, flushes) = counting();
+    let mut a = app_playing_with(d.path(), "Emerald", snapshot);
+    a.tick_ms(60_000);
+    a.apply(Action::PowerHold);
+    assert_eq!(flushes.load(Ordering::Relaxed), 2);
+    persist::settle();
+    let resume = StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+        .read_resume()
+        .unwrap()
+        .expect("the hold made it durable");
+    assert_eq!(resume[0], 1, "the autosave's older state won the race");
 }
 
 fn counting() -> (Box<dyn Snapshot>, Arc<AtomicUsize>) {
