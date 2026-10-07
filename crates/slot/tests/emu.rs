@@ -1016,6 +1016,35 @@ fn a_driven_worker_runs_one_frame_per_tick() {
 }
 
 #[test]
+fn a_driven_worker_answers_a_flush_while_it_waits_for_the_tick() {
+    let emu = spawn();
+    emu.set_driven(true);
+    assert!(
+        wait_for(|| emu.locked()),
+        "the worker never locked to the display"
+    );
+    let snapshot = emu.snapshot();
+    for _ in 0..10 {
+        emu.tick(PANEL);
+        assert!(emu.wait_frame(Duration::from_millis(100)));
+        let before = emu.published_count();
+        let began = Instant::now();
+        assert!(snapshot.state().is_some());
+        assert!(snapshot.save_ram().is_some());
+        let took = began.elapsed();
+        assert!(
+            took < Duration::from_millis(10),
+            "the flush waited {took:?} for the worker to give up on the tick"
+        );
+        assert_eq!(
+            emu.published_count(),
+            before,
+            "the worker ran a frame to answer, not a tick"
+        );
+    }
+}
+
+#[test]
 fn a_stalled_display_does_not_stall_the_worker() {
     let emu = spawn();
     emu.set_driven(true);
