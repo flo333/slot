@@ -492,6 +492,7 @@ impl App {
     }
 
     fn start(&mut self) {
+        self.rest_on_last_carts();
         let seated = if self.single_cart() {
             Some((self.shelf_at, 0))
         } else {
@@ -513,7 +514,25 @@ impl App {
             None => {
                 self.state.cart = None;
                 self.state.cart_platform = None;
+                if let Some(at) = self.state.last_cart_platform.and_then(|platform| {
+                    self.shelves
+                        .iter()
+                        .position(|(p, s)| *p == platform && !s.carts.is_empty())
+                }) {
+                    self.shelf_at = at;
+                }
                 self.name_pending = true;
+            }
+        }
+    }
+
+    fn rest_on_last_carts(&mut self) {
+        for (platform, shelf) in &mut self.shelves {
+            let Some(stem) = self.state.last_cart(*platform) else {
+                continue;
+            };
+            if let Some(i) = shelf.carts.iter().position(|c| c.stem == stem) {
+                shelf.select(i);
             }
         }
     }
@@ -1840,6 +1859,9 @@ impl App {
         let platform = self.seated_cart().map(|c| c.platform);
         if self.state.cart == cart && self.state.cart_platform == platform {
             return;
+        }
+        if let (Some(cart), Some(platform)) = (&cart, platform) {
+            self.state.set_last_cart(platform, cart.clone());
         }
         self.state.cart = cart;
         self.state.cart_platform = platform;
