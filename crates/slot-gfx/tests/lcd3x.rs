@@ -1,4 +1,6 @@
-use slot_gfx::{lcd3x_factors, lcd3x_mask};
+use slot_gfx::{
+    canvas_size, lcd3x_factors, lcd3x_mask, lcd3x_mask_fits, mask_texture_rgba8, WHOLE_TEXTURE,
+};
 use std::f64::consts::PI;
 
 const SRC_W: usize = 240;
@@ -96,4 +98,59 @@ fn the_pattern_repeats_once_per_source_pixel_at_any_scale() {
             }
         }
     }
+}
+
+#[test]
+fn quantised_mask_texture_stays_within_one_lsb_of_the_reference() {
+    let src = pseudorandom_240x160();
+    let reference = render_reference(&src);
+    let tex = mask_texture_rgba8();
+    let mut mask = [[[0.0f32; 3]; 3]; 3];
+    for (y, row) in mask.iter_mut().enumerate() {
+        for (x, cell) in row.iter_mut().enumerate() {
+            for (c, v) in cell.iter_mut().enumerate() {
+                *v = tex[(y * 3 + x) * 4 + c] as f32 / 255.0;
+            }
+        }
+    }
+    let optimized = render_with_mask(&src, &mask);
+    let worst = reference
+        .iter()
+        .zip(&optimized)
+        .map(|(a, b)| (*a as i32 - *b as i32).abs())
+        .max()
+        .unwrap();
+    assert!(
+        worst <= 1,
+        "max channel deviation {worst} from the 8 bit mask"
+    );
+}
+
+fn fbo_scale(window: (u32, u32)) -> [f32; 2] {
+    let (w, h) = canvas_size(window);
+    [w as f32 / OUT_W as f32, h as f32 / OUT_H as f32]
+}
+
+#[test]
+fn the_mask_texture_draws_only_where_every_game_pixel_is_three_by_three() {
+    for window in [(720, 480), (1280, 720), (1440, 960)] {
+        assert!(
+            lcd3x_mask_fits(fbo_scale(window), WHOLE_TEXTURE, WHOLE_TEXTURE),
+            "{window:?} is an exact 3x canvas but skipped the mask"
+        );
+    }
+    for window in [(640, 480), (1024, 768), (480, 320)] {
+        assert!(
+            !lcd3x_mask_fits(fbo_scale(window), WHOLE_TEXTURE, WHOLE_TEXTURE),
+            "{window:?} is not 3x but took the mask"
+        );
+    }
+}
+
+#[test]
+fn a_cropped_source_or_picture_keeps_the_computed_grille() {
+    let gb = [40.0 / 240.0, 8.0 / 160.0, 160.0 / 240.0, 144.0 / 160.0];
+    assert!(!lcd3x_mask_fits([1.0, 1.0], gb, WHOLE_TEXTURE));
+    let pic = [40.0 / 240.0, 8.0 / 160.0, 200.0 / 240.0, 152.0 / 160.0];
+    assert!(!lcd3x_mask_fits([1.0, 1.0], WHOLE_TEXTURE, pic));
 }

@@ -33,3 +33,14 @@ pub fn lcd3x_mask() -> [[[f32; 3]; 3]; 3] {
     }
     mask
 }
+
+pub fn mask_texture_rgba8() -> [u8; 3 * 3 * 4] {
+    let mask = lcd3x_mask();
+    let mut tex = [255u8; 3 * 3 * 4];
+    for (i, cell) in mask.iter().flatten().enumerate() {
+        for (c, v) in cell.iter().enumerate() {
+            tex[i * 4 + c] = (v * 255.0).round() as u8;
+        }
+    }
+    tex
+}

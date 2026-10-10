@@ -123,6 +123,21 @@ void main() {
 }
 "#;
 
+pub const LCD3X_MASK_FRAG: &str = r#"
+precision mediump float;
+uniform sampler2D u_game;
+uniform sampler2D u_mask;
+uniform vec2 u_src;
+uniform vec4 u_uv;
+uniform float u_bright;
+varying vec2 v_uv;
+void main() {
+    vec2 uv = u_uv.xy + v_uv * u_uv.zw;
+    vec3 rgb = texture2D(u_game, uv).rgb * texture2D(u_mask, v_uv * u_src).rgb;
+    FRAG_COLOR = vec4(rgb * u_bright, 1.0);
+}
+"#;
+
 pub const BLIT_VERT: &str = r#"
 attribute vec2 a_pos;
 uniform vec4 u_uv;

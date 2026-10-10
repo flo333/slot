@@ -1,7 +1,7 @@
-use crate::lcd3x::ScreenEffect;
+use crate::lcd3x::{mask_texture_rgba8, ScreenEffect};
 use crate::power::{screen_brightness, screen_rect};
 use crate::quad::Quad;
-use crate::shaders::{GAME_FRAG, RECT_VERT};
+use crate::shaders::{GAME_FRAG, LCD3X_MASK_FRAG, RECT_VERT};
 use crate::surface::{GfxError, OUT_H, OUT_W};
 
 pub const SCALE: u32 = 3;
@@ -10,7 +10,65 @@ pub const SRC_H: u32 = OUT_H / SCALE;
 
 pub const WHOLE_TEXTURE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
+pub fn lcd3x_mask_fits(fbo_scale: [f32; 2], src: [f32; 4], pic: [f32; 4]) -> bool {
+    fbo_scale == [1.0, 1.0] && src == WHOLE_TEXTURE && pic == WHOLE_TEXTURE
+}
+
+struct MaskPass {
+    prog: gl::types::GLuint,
+    mask: gl::types::GLuint,
+    u_rect: gl::types::GLint,
+    u_bright: gl::types::GLint,
+    u_uv: gl::types::GLint,
+}
+
+impl MaskPass {
+    fn new() -> Result<Self, GfxError> {
+        let prog = crate::shaders::program(RECT_VERT, LCD3X_MASK_FRAG)?;
+        let mask = crate::gl::texture(
+            3,
+            3,
+            gl::NEAREST,
+            gl::REPEAT,
+            gl::RGBA,
+            Some(&mask_texture_rgba8()),
+        );
+        unsafe {
+            gl::UseProgram(prog);
+            gl::Uniform1i(crate::gl::uniform_location(prog, "u_game"), 0);
+            gl::Uniform1i(crate::gl::uniform_location(prog, "u_mask"), 1);
+            gl::Uniform2f(
+                crate::gl::uniform_location(prog, "u_src"),
+                SRC_W as f32,
+                SRC_H as f32,
+            );
+            gl::Uniform2f(
+                crate::gl::uniform_location(prog, "u_target"),
+                OUT_W as f32,
+                OUT_H as f32,
+            );
+            Ok(MaskPass {
+                prog,
+                mask,
+                u_rect: crate::gl::uniform_location(prog, "u_rect"),
+                u_bright: crate::gl::uniform_location(prog, "u_bright"),
+                u_uv: crate::gl::uniform_location(prog, "u_uv"),
+            })
+        }
+    }
+}
+
+impl Drop for MaskPass {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteTextures(1, &self.mask);
+            gl::DeleteProgram(self.prog);
+        }
+    }
+}
+
 pub struct GamePass {
+    lcd3x: MaskPass,
     prog: gl::types::GLuint,
     game: gl::types::GLuint,
     u_rect: gl::types::GLint,
@@ -31,6 +89,7 @@ pub struct GamePass {
 
 impl GamePass {
     pub fn new() -> Result<Self, GfxError> {
+        let lcd3x = MaskPass::new()?;
         let prog = crate::shaders::program(RECT_VERT, GAME_FRAG)?;
         let game = crate::gl::texture(SRC_W, SRC_H, gl::NEAREST, gl::CLAMP_TO_EDGE, gl::BGRA, None);
         let paper = crate::gl::texture(
@@ -65,6 +124,7 @@ impl GamePass {
             u_pic = crate::gl::uniform_location(prog, "u_pic");
         }
         Ok(GamePass {
+            lcd3x,
             prog,
             game,
             u_rect,
@@ -152,6 +212,9 @@ impl GamePass {
     }
 
     fn draw_source(&self, tex: gl::types::GLuint, quad: &Quad, src: [f32; 4]) {
+        if self.effect == ScreenEffect::Lcd3x && lcd3x_mask_fits(self.fbo_scale, src, self.pic) {
+            return self.draw_masked(tex, quad, src);
+        }
         let (x, y, w, h) = screen_rect(self.power);
         unsafe {
             gl::UseProgram(self.prog);
@@ -170,6 +233,22 @@ impl GamePass {
             );
             gl::ActiveTexture(gl::TEXTURE1);
             gl::BindTexture(gl::TEXTURE_2D, self.paper);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, tex);
+        }
+        quad.draw();
+    }
+
+    fn draw_masked(&self, tex: gl::types::GLuint, quad: &Quad, src: [f32; 4]) {
+        let (x, y, w, h) = screen_rect(self.power);
+        let pass = &self.lcd3x;
+        unsafe {
+            gl::UseProgram(pass.prog);
+            gl::Uniform4f(pass.u_rect, x, y, w, h);
+            gl::Uniform4f(pass.u_uv, src[0], src[1], src[2], src[3]);
+            gl::Uniform1f(pass.u_bright, screen_brightness(self.power));
+            gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D, pass.mask);
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, tex);
         }
