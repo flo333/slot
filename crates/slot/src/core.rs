@@ -41,12 +41,13 @@ pub fn open_core(
     root: &Path,
     core: Core,
     serial: &str,
+    code: &str,
     colour: bool,
     palette: Option<GbPalette>,
     link: Option<u8>,
 ) -> Opened {
     let paths = candidates(root, core);
-    match open_named(root, core, serial, colour, palette, link, &paths) {
+    match open_named(root, core, serial, code, colour, palette, link, &paths) {
         Some(core) => Opened { core, named: true },
         None => {
             report_missing(core, &paths);
@@ -76,16 +77,18 @@ pub fn open_core_for_palette(
     palette: Option<GbPalette>,
     paths: &[PathBuf],
 ) -> Box<dyn RetroCore> {
-    open_named(root, core, serial, colour, palette, None, paths).unwrap_or_else(|| {
+    open_named(root, core, serial, "", colour, palette, None, paths).unwrap_or_else(|| {
         report_missing(core, paths);
         Box::new(MockCore::new())
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_named(
     root: &Path,
     core: Core,
     serial: &str,
+    code: &str,
     colour: bool,
     palette: Option<GbPalette>,
     link: Option<u8>,
@@ -107,6 +110,12 @@ fn open_named(
                     colour,
                     palette,
                 );
+                if let Some((key, value)) = idle_option(core, code) {
+                    opened.set_option(key, value);
+                    if value == IDLE_DETECT {
+                        eprintln!("slot: core: idle loop detection on for {code}");
+                    }
+                }
                 if let Some(player) = link {
                     apply_link_options(&mut opened, core, player);
                 }
@@ -155,6 +164,19 @@ pub fn colour_option(which: Core, on: bool) -> Option<(&'static str, &'static st
             "gpsp_color_correction",
             if on { "enabled" } else { "disabled" },
         )),
+    }
+}
+
+const IDLE_DETECT: &str = "Detect and Remove";
+
+// set mgba_idle_optimization to "Detect and Remove" for FireRed and LeafGreen
+pub fn idle_option(which: Core, code: &str) -> Option<(&'static str, &'static str)> {
+    match which {
+        Core::Mgba if code.starts_with("BPR") || code.starts_with("BPG") => {
+            Some(("mgba_idle_optimization", IDLE_DETECT))
+        }
+        Core::Mgba => Some(("mgba_idle_optimization", "Remove Known")),
+        Core::Gpsp => None,
     }
 }
 
@@ -213,6 +235,25 @@ mod tests {
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn only_firered_and_leafgreen_have_mgba_look_for_their_idle_loop() {
+        for code in ["BPRE", "BPRD", "BPGE", "BPGJ"] {
+            assert_eq!(
+                idle_option(Core::Mgba, code),
+                Some(("mgba_idle_optimization", "Detect and Remove")),
+                "{code}"
+            );
+        }
+        for code in ["AXVE", "BPEE", "AMKE", ""] {
+            assert_eq!(
+                idle_option(Core::Mgba, code),
+                Some(("mgba_idle_optimization", "Remove Known")),
+                "{code:?}"
+            );
+        }
+        assert_eq!(idle_option(Core::Gpsp, "BPRE"), None);
+    }
 
     #[test]
     fn each_core_spells_colour_correction_its_own_way() {
