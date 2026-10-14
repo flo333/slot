@@ -1,16 +1,18 @@
 diff --git a/src/gba/audio.c b/src/gba/audio.c
-index 278e878..3d3353e 100644
+index 278e878..46c5026 100644
 --- a/src/gba/audio.c
 +++ b/src/gba/audio.c
-@@ -453,6 +453,18 @@ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState*
+@@ -453,6 +453,20 @@ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState*
  	}
  	STORE_32(audio->lastSample, 0, &state->audio.lastSample);
  
 +	// The GB channels' frequencies sit in write-only register bits, which the IO block keeps
-+	// masked off, channel 3's output is not in the wave RAM it rotates through, and channel 4
-+	// averages the noise it ran since it was last mixed. Without these, a load restarts
-+	// channels 1-3 at frequency 0, channels 3 and 4 on a stale output and channel 4 on no
-+	// average. Channel 4's output fits in the five bits above channel 3's 11-bit rate.
++	// masked off, and channel 3's output is not in the wave RAM it rotates through. Without
++	// these, a load restarts channels 1-3 at frequency 0 and channels 3 and 4 on a stale
++	// output. Channel 3's output goes in ch2's second reserved word, and channel 4's in the
++	// five bits above channel 3's 11-bit rate. Channel 4's noise average only feeds the GB
++	// mixer, which a GBA never runs, but saving it keeps a state saved straight after a load
++	// identical to the one loaded.
 +	STORE_32(audio->psg.ch1.control.frequency, 0, &state->audio.psg.ch1.reserved);
 +	STORE_32(audio->psg.ch2.control.frequency, 0, &state->audio.psg.ch2.reserved[0]);
 +	STORE_32(audio->psg.ch3.sample, 0, &state->audio.psg.ch2.reserved[1]);
@@ -21,30 +23,17 @@ index 278e878..3d3353e 100644
  	int readA = audio->chA.fifoRead;
  	int readB = audio->chB.fifoRead;
  	for (i = 0; i < GBA_AUDIO_FIFO_SIZE; ++i) {
-@@ -503,15 +515,38 @@ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState*
- void GBAAudioDeserialize(struct GBAAudio* audio, const struct GBASerializedState* state) {
- 	GBAudioPSGDeserialize(&audio->psg, &state->audio.psg, &state->audio.flags);
+@@ -501,17 +515,41 @@ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState*
+ }
  
-+	// A state from before these were saved holds zero in them, which is what a load gave
-+	// the channels anyway.
-+	int32_t value;
-+	LOAD_32(value, 0, &state->audio.psg.ch1.reserved);
-+	audio->psg.ch1.control.frequency = value & 0x7FF;
-+	LOAD_32(value, 0, &state->audio.psg.ch2.reserved[0]);
-+	audio->psg.ch2.control.frequency = value & 0x7FF;
-+	LOAD_32(value, 0, &state->audio.psg.ch2.reserved[1]);
-+	audio->psg.ch3.sample = value;
-+	uint16_t rate;
-+	LOAD_16(rate, 0, &state->audio.psg.ch3.reserved);
-+	audio->psg.ch3.rate = rate & 0x7FF;
-+	audio->psg.ch4.sample = rate >> 11;
-+	LOAD_32(audio->psg.ch4.nSamples, 0, &state->audio.reserved[0]);
-+	LOAD_32(audio->psg.ch4.samples, 0, &state->audio.reserved[1]);
-+
+ void GBAAudioDeserialize(struct GBAAudio* audio, const struct GBASerializedState* state) {
+-	GBAudioPSGDeserialize(&audio->psg, &state->audio.psg, &state->audio.flags);
+-
 +	// The IO block loads these four registers without writing them. Writing them here would
 +	// run each channel up to the present, ahead of the mixer, and clock its length if the
 +	// length enable bit turned on against the running console's, so set what they hold
-+	// directly instead.
++	// directly instead. Channel 4's go in before the PSG, which times a state from before
++	// channel 4's last event was saved by them.
  	uint16_t reg;
  	LOAD_16(reg, GBA_REG_SOUND1CNT_X, state->io);
 -	GBAIOWrite(audio->p, GBA_REG_SOUND1CNT_X, reg & 0x7FFF);
@@ -61,6 +50,24 @@ index 278e878..3d3353e 100644
 +	audio->psg.ch4.frequency = GBAudioRegisterNoiseFeedbackGetFrequency((uint8_t) reg);
 +	audio->psg.ch4.power = GBAudioRegisterNoiseFeedbackGetPower((uint8_t) reg);
 +	audio->psg.ch4.stop = GBAudioRegisterNoiseControlGetStop(reg >> 8);
++
++	GBAudioPSGDeserialize(&audio->psg, &state->audio.psg, &state->audio.flags);
++
++	// A state from before these were saved holds zero in them, which is what a load gave
++	// the channels anyway. The PSG clears channel 4's noise average, so it goes in after.
++	int32_t value;
++	LOAD_32(value, 0, &state->audio.psg.ch1.reserved);
++	audio->psg.ch1.control.frequency = value & 0x7FF;
++	LOAD_32(value, 0, &state->audio.psg.ch2.reserved[0]);
++	audio->psg.ch2.control.frequency = value & 0x7FF;
++	LOAD_32(value, 0, &state->audio.psg.ch2.reserved[1]);
++	audio->psg.ch3.sample = value;
++	uint16_t rate;
++	LOAD_16(rate, 0, &state->audio.psg.ch3.reserved);
++	audio->psg.ch3.rate = rate & 0x7FF;
++	audio->psg.ch4.sample = rate >> 11;
++	LOAD_32(audio->psg.ch4.nSamples, 0, &state->audio.reserved[0]);
++	LOAD_32(audio->psg.ch4.samples, 0, &state->audio.reserved[1]);
  
  	LOAD_32(audio->chA.internalSample, 0, &state->audio.internalA);
  	LOAD_32(audio->chB.internalSample, 0, &state->audio.internalB);
