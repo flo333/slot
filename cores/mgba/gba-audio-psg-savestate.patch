@@ -1,0 +1,71 @@
+diff --git a/src/gba/audio.c b/src/gba/audio.c
+index ca5167f..257ef8e 100644
+--- a/src/gba/audio.c
++++ b/src/gba/audio.c
+@@ -460,6 +460,17 @@ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState*
+ 	}
+ 	STORE_32(audio->lastSample, 0, &state->audio.lastSample);
+ 
++	// The GB channels' frequencies sit in write-only register bits, which the IO block keeps
++	// masked off, channel 3's output is not in the wave RAM it rotates through, and channel 4
++	// averages the noise it ran since it was last mixed. Without these, a load restarts
++	// channels 1-3 at frequency 0, channel 3 on a stale output and channel 4 on no average.
++	STORE_32(audio->psg.ch1.control.frequency, 0, &state->audio.psg.ch1.reserved);
++	STORE_32(audio->psg.ch2.control.frequency, 0, &state->audio.psg.ch2.reserved[0]);
++	STORE_32(audio->psg.ch3.sample, 0, &state->audio.psg.ch2.reserved[1]);
++	STORE_16(audio->psg.ch3.rate, 0, &state->audio.psg.ch3.reserved);
++	STORE_32(audio->psg.ch4.nSamples, 0, &state->audio.reserved[0]);
++	STORE_32(audio->psg.ch4.samples, 0, &state->audio.reserved[1]);
++
+ 	int readA = audio->chA.fifoRead;
+ 	int readB = audio->chB.fifoRead;
+ 	for (i = 0; i < GBA_AUDIO_FIFO_SIZE; ++i) {
+@@ -510,15 +521,45 @@ void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState*
+ void GBAAudioDeserialize(struct GBAAudio* audio, const struct GBASerializedState* state) {
+ 	GBAudioPSGDeserialize(&audio->psg, &state->audio.psg, &state->audio.flags);
+ 
++	// A state from before these were saved holds zero in them, which is what a load gave
++	// the channels anyway.
++	int32_t value;
++	LOAD_32(value, 0, &state->audio.psg.ch1.reserved);
++	audio->psg.ch1.control.frequency = value & 0x7FF;
++	LOAD_32(value, 0, &state->audio.psg.ch2.reserved[0]);
++	audio->psg.ch2.control.frequency = value & 0x7FF;
++	LOAD_32(value, 0, &state->audio.psg.ch2.reserved[1]);
++	audio->psg.ch3.sample = value;
++	int16_t rate;
++	LOAD_16(rate, 0, &state->audio.psg.ch3.reserved);
++	audio->psg.ch3.rate = rate & 0x7FF;
++	LOAD_32(audio->psg.ch4.nSamples, 0, &state->audio.reserved[0]);
++	LOAD_32(audio->psg.ch4.samples, 0, &state->audio.reserved[1]);
++
++	// Each write below first runs its channel up to the present. Channels 3 and 4 carry what
++	// they ran in themselves, the rotated wave RAM and the noise register and its average, so
++	// stepping them here, ahead of the mixer, plays their next samples early. Put them back
++	// where the state left them and let the mixer step them as it would have.
++	struct GBAudioWaveChannel ch3 = audio->psg.ch3;
++	struct GBAudioNoiseChannel ch4 = audio->psg.ch4;
+ 	uint16_t reg;
+ 	LOAD_16(reg, GBA_REG_SOUND1CNT_X, state->io);
+-	GBAIOWrite(audio->p, GBA_REG_SOUND1CNT_X, reg & 0x7FFF);
++	GBAIOWrite(audio->p, GBA_REG_SOUND1CNT_X, (reg & 0x7800) | audio->psg.ch1.control.frequency);
+ 	LOAD_16(reg, GBA_REG_SOUND2CNT_HI, state->io);
+-	GBAIOWrite(audio->p, GBA_REG_SOUND2CNT_HI, reg & 0x7FFF);
++	GBAIOWrite(audio->p, GBA_REG_SOUND2CNT_HI, (reg & 0x7800) | audio->psg.ch2.control.frequency);
+ 	LOAD_16(reg, GBA_REG_SOUND3CNT_X, state->io);
+-	GBAIOWrite(audio->p, GBA_REG_SOUND3CNT_X, reg & 0x7FFF);
++	GBAIOWrite(audio->p, GBA_REG_SOUND3CNT_X, (reg & 0x7800) | audio->psg.ch3.rate);
+ 	LOAD_16(reg, GBA_REG_SOUND4CNT_HI, state->io);
+ 	GBAIOWrite(audio->p, GBA_REG_SOUND4CNT_HI, reg & 0x7FFF);
++	memcpy(audio->psg.ch3.wavedata32, ch3.wavedata32, sizeof(ch3.wavedata32));
++	audio->psg.ch3.nextUpdate = ch3.nextUpdate;
++	audio->psg.ch3.sample = ch3.sample;
++	audio->psg.ch3.readable = ch3.readable;
++	audio->psg.ch4.lfsr = ch4.lfsr;
++	audio->psg.ch4.lastEvent = ch4.lastEvent;
++	audio->psg.ch4.nSamples = ch4.nSamples;
++	audio->psg.ch4.samples = ch4.samples;
++	audio->psg.ch4.sample = ch4.sample;
+ 
+ 	LOAD_32(audio->chA.internalSample, 0, &state->audio.internalA);
+ 	LOAD_32(audio->chB.internalSample, 0, &state->audio.internalB);
