@@ -454,11 +454,11 @@ impl Session {
     }
 
     fn spawn_core(&mut self, stem: &str, serial: &'static str) {
-        let Some((rom, platform)) = self
+        let Some((rom, platform, code)) = self
             .app
             .seated_cart()
             .filter(|c| c.stem == stem)
-            .map(|c| (c.rom.clone(), c.platform))
+            .map(|c| (c.rom.clone(), c.platform, c.code.clone()))
         else {
             return;
         };
@@ -481,6 +481,7 @@ impl Session {
             core,
             platform,
             serial,
+            &code,
             self.app.colour_correction_for(platform),
             palette,
             player,

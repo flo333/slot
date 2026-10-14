@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use slot::app::{runahead_for, Phase};
 use slot::audio::{AudioSink, Ring, StubSink};
-use slot::core::apply_core_options;
+use slot::core::{apply_core_options, idle_option};
 use slot::emu::{CoreState, EmuHandle, Speed};
 use slot::session::Session;
 use slot_input::Millis;
@@ -572,4 +572,96 @@ fn on_mgba_with_local_roms_the_ring_gets_as_much_sound_as_off_at_every_setting()
             );
         }
     }
+}
+
+// The steps RunAhead::run takes: run the real frame, save it, run ahead, keep that sound, load.
+// Whatever the load fails to put back is heard on the frame run ahead from it.
+fn sound_run_ahead(core: &mut dyn RetroCore, frames: usize) -> Vec<Vec<i16>> {
+    (0..frames)
+        .map(|_| {
+            core.set_frame_skip(true);
+            core.run_frame(ButtonMask(0));
+            let state = core.serialize().expect("mGBA would not save");
+            let _ = core.take_audio();
+            core.set_frame_skip(false);
+            core.run_frame(ButtonMask(0));
+            let sound = core.take_audio();
+            core.unserialize(&state)
+                .expect("mGBA would not load its own save");
+            sound
+        })
+        .collect()
+}
+
+// Every GBA rom, not just the first: which games show this depends on what their music plays on.
+fn local_gba_roms() -> Vec<PathBuf> {
+    let Ok(dir) = std::fs::read_dir(common::repo_root().join("sdcard/Games/GBA")) else {
+        return Vec::new();
+    };
+    let mut roms: Vec<PathBuf> = dir
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "gba"))
+        .collect();
+    roms.sort();
+    roms
+}
+
+#[test]
+fn on_mgba_with_local_roms_run_ahead_plays_the_same_sound_as_off() {
+    let _g = common::core_lock();
+    let roms = local_gba_roms();
+    let Some(dylib) = common::vendored_core().filter(|_| !roms.is_empty()) else {
+        eprintln!("no vendored mGBA core or no GBA rom under sdcard/Games/GBA, skipping");
+        return;
+    };
+    const FRAMES: usize = 600;
+    let root = tempfile::tempdir().expect("a temporary root");
+    let mut wrong = Vec::new();
+    for rom in roms {
+        // Into the intro and the title music, where most games are making some sound.
+        for warm in [1500, 3000] {
+            let mut core = LibretroCore::open_with(&dylib, root.path(), root.path())
+                .expect("the vendored core would not open, is another one still running?");
+            apply_core_options(
+                &mut core,
+                Core::Mgba,
+                Platform::Gba,
+                "auto",
+                false,
+                false,
+                None,
+            );
+            // As slot opens it, so FireRed runs with its idle loop found.
+            let code = slot_store::header_code(&rom).unwrap_or_default();
+            if let Some((key, value)) = idle_option(Core::Mgba, &code) {
+                core.set_option(key, value);
+            }
+            core.load(&rom).expect("the rom would not load");
+            for _ in 0..warm {
+                core.run_frame(ButtonMask(0));
+                let _ = core.take_audio();
+            }
+            let start = core.serialize().expect("mGBA would not save");
+            let off: Vec<Vec<i16>> = (0..=FRAMES)
+                .map(|_| {
+                    core.run_frame(ButtonMask(0));
+                    core.take_audio()
+                })
+                .collect();
+            core.unserialize(&start)
+                .expect("mGBA would not load its own save");
+            let ahead = sound_run_ahead(&mut core, FRAMES);
+            let differ = (0..FRAMES).filter(|&i| ahead[i] != off[i + 1]).count();
+            let name = rom.file_name().unwrap_or_default().to_string_lossy();
+            eprintln!("{name} from frame {warm}: {differ} of {FRAMES} frames differ");
+            if differ > 0 {
+                wrong.push(format!("{name} from frame {warm}: {differ}"));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "frames run ahead sounded different from the same frames played with run-ahead off: {wrong:?}"
+    );
 }
