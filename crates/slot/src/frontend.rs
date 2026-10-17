@@ -121,6 +121,8 @@ struct Clocks {
     platform_tex: Option<TexId>,
     title: String,
     title_tex: Option<TexId>,
+    perf: String,
+    perf_tex: Option<TexId>,
     ink: [u8; 3],
 }
 
@@ -921,6 +923,16 @@ fn sync_clock(app: &mut App, compositor: &mut Compositor, clocks: &mut Clocks) {
             let w = face.w;
             let id = upload(compositor, &mut clocks.battery_tex, face);
             app.set_battery_percent_face(id, w);
+        }
+    }
+    let perf_shown = app.perf_text().unwrap_or_default();
+    if perf_shown != clocks.perf {
+        clocks.perf = perf_shown.to_string();
+        if !perf_shown.is_empty() {
+            let face = word_ink(perf_shown, slot_ui::HUD_INK);
+            let w = face.w;
+            let id = upload(compositor, &mut clocks.perf_tex, face);
+            app.set_perf_face(id, w);
         }
     }
 }

@@ -63,6 +63,10 @@ impl Power {
         self.platform.set_governor(governor);
     }
 
+    pub fn cpu_khz(&self) -> Option<u32> {
+        self.platform.cpu_khz()
+    }
+
     pub fn relink_adb(&mut self) -> bool {
         self.platform.relink_adb()
     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, BezelPick, Cart, Core,
-    GbPalette, Governor, Platform, Recent, Shader, SlotState, StateEntry, StateRing, WallpaperPick,
+    GbPalette, Platform, Recent, Shader, SlotState, StateEntry, StateRing, WallpaperPick,
     WallpaperTint, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, RUN_AHEAD_MAX, VOLUME_MAX,
 };
 use slot_ui::{
@@ -376,6 +376,9 @@ pub struct App {
     wallpaper: Option<TexId>,
     random_wallpaper: Option<Option<String>>,
     battery_percent: slot_ui::Printed,
+    perf: PerfMeter,
+    perf_face: slot_ui::Printed,
+    full_clock: bool,
     bolt: Option<TexId>,
     hud_bolt: Option<TexId>,
     slot_faces: Option<(TexId, TexId)>,
@@ -539,6 +542,9 @@ impl App {
             wallpaper: None,
             random_wallpaper: None,
             battery_percent: slot_ui::Printed::default(),
+            perf: PerfMeter::default(),
+            perf_face: slot_ui::Printed::default(),
+            full_clock: false,
             bolt: None,
             hud_bolt: None,
             slot_faces: None,
@@ -895,8 +901,8 @@ impl App {
             QuickRow::Turbo => Some(QuickValue::flag(self.state.turbo)),
             QuickRow::Rewind => Some(QuickValue::flag(self.state.rewind)),
             QuickRow::RunAhead => QuickValue::frames(self.state.runahead),
-            QuickRow::CpuGovernor => Some(governor_value(self.state.cpu_governor)),
             QuickRow::IdleLoop => Some(QuickValue::flag(self.state.idle_detect)),
+            QuickRow::PerfOverlay => Some(QuickValue::flag(self.state.perf_overlay)),
             QuickRow::Recents => Some(if self.state.show_recents {
                 QuickValue::Show
             } else {
@@ -930,6 +936,7 @@ impl App {
             | QuickRow::ExitGame
             | QuickRow::PlayScreen
             | QuickRow::PlayGameplay
+            | QuickRow::Advanced
             | QuickRow::Palette
             | QuickRow::ScreenGba
             | QuickRow::ScreenGbc
@@ -1265,6 +1272,60 @@ impl App {
         Some(self.shelves[self.shelf_at].0.name())
     }
 
+    // Called each present with how many frames the core has shown so far. Every quarter second
+    // the overlay's line is worked out again, over the last second of play.
+    pub fn note_frames(&mut self, published: u64) {
+        if !self.state.perf_overlay || !matches!(self.phase, Phase::Playing { .. }) {
+            self.perf = PerfMeter::default();
+            return;
+        }
+        let now = self.now();
+        let samples = &mut self.perf.samples;
+        // A core started afresh counts from zero again.
+        if samples.back().is_some_and(|&(_, from)| published < from) {
+            samples.clear();
+        }
+        if samples
+            .back()
+            .is_some_and(|&(at, _)| now.saturating_sub(at) < PERF_STEP_MS)
+        {
+            return;
+        }
+        samples.push_back((now, published));
+        // Only the newest sample a full second back is needed to count from.
+        while samples
+            .get(1)
+            .is_some_and(|&(at, _)| now.saturating_sub(at) >= PERF_WINDOW_MS)
+        {
+            samples.pop_front();
+        }
+        let (at, from) = samples[0];
+        let span = now.saturating_sub(at);
+        if span < PERF_WINDOW_MS {
+            return;
+        }
+        let fps = (published - from) as f64 * 1000.0 / span as f64;
+        let mhz = self
+            .power
+            .as_ref()
+            .and_then(Power::cpu_khz)
+            .map(|khz| khz / 1000);
+        self.perf.text = Some(perf_line(fps, mhz));
+    }
+
+    // The core is held still under a menu: what is counted starts over once it runs again.
+    pub fn pause_perf(&mut self) {
+        self.perf = PerfMeter::default();
+    }
+
+    pub fn perf_text(&self) -> Option<&str> {
+        self.perf.text.as_deref()
+    }
+
+    pub fn set_perf_face(&mut self, face: TexId, w: u32) {
+        self.perf_face = slot_ui::Printed::new(face, w);
+    }
+
     pub fn set_battery_percent_face(&mut self, face: TexId, w: u32) {
         self.battery_percent = slot_ui::Printed::new(face, w);
     }
@@ -1379,6 +1440,18 @@ impl App {
 
     pub fn set_snapshot(&mut self, snapshot: Box<dyn Snapshot>) {
         self.snapshot = Some(snapshot);
+    }
+
+    // Whether a core is up, as the session sees it each present.
+    pub fn set_core_running(&mut self, running: bool) {
+        let full = running && full_clock_for(self.platform);
+        if self.full_clock == full {
+            return;
+        }
+        self.full_clock = full;
+        if let Some(power) = &mut self.power {
+            power.set_governor(governor_for(full));
+        }
     }
 
     pub fn set_core(&mut self, core: Core) {
@@ -1565,7 +1638,7 @@ impl App {
 
     pub fn set_power(&mut self, mut power: Power) {
         power.set_backlight(self.state.brightness);
-        power.set_governor(self.state.cpu_governor.key());
+        power.set_governor(governor_for(self.full_clock));
         self.headphones = power.headphones();
         self.hud.set_headphones(self.headphones);
         let secs = power.now();
@@ -2024,6 +2097,7 @@ impl App {
             QuickRow::Screen
             | QuickRow::Game
             | QuickRow::General
+            | QuickRow::Advanced
             | QuickRow::ScreenGba
             | QuickRow::ScreenGbc
             | QuickRow::ScreenGb => {
@@ -2045,8 +2119,8 @@ impl App {
             | QuickRow::GbcShader
             | QuickRow::GbPalettes
             | QuickRow::RunAhead
-            | QuickRow::CpuGovernor
             | QuickRow::IdleLoop
+            | QuickRow::PerfOverlay
             | QuickRow::Rumble
             | QuickRow::Theme
             | QuickRow::Recents
@@ -2155,6 +2229,7 @@ impl App {
             QuickRow::Turbo => s.turbo = !s.turbo,
             QuickRow::Rewind => s.rewind = !s.rewind,
             QuickRow::IdleLoop => s.idle_detect = !s.idle_detect,
+            QuickRow::PerfOverlay => s.perf_overlay = !s.perf_overlay,
             QuickRow::GbPalettes => s.gb_palettes = !s.gb_palettes,
             QuickRow::RunAhead => {
                 let n = RUN_AHEAD_MAX + 1;
@@ -2162,12 +2237,6 @@ impl App {
             }
             QuickRow::Theme => s.appearance = s.appearance.toggle(),
             QuickRow::WallpaperTint => s.wallpaper_tint = s.wallpaper_tint.step(right),
-            QuickRow::CpuGovernor => {
-                s.cpu_governor = s.cpu_governor.step(right);
-                if let Some(power) = &mut self.power {
-                    power.set_governor(self.state.cpu_governor.key());
-                }
-            }
             QuickRow::Wallpaper
             | QuickRow::Recents
             | QuickRow::ShowTitles
@@ -2182,6 +2251,7 @@ impl App {
             | QuickRow::ExitGame
             | QuickRow::PlayScreen
             | QuickRow::PlayGameplay
+            | QuickRow::Advanced
             | QuickRow::Shader
             | QuickRow::ColourCorrection
             | QuickRow::Palette
@@ -3100,6 +3170,12 @@ impl App {
                 });
                 return;
             }
+        }
+        if matches!(self.phase, Phase::Playing { .. })
+            && self.screen >= 1.0
+            && self.perf.text.is_some()
+        {
+            slot_ui::draw_perf(self.perf_face, out);
         }
         if let (Some(row), Phase::Playing { .. }, true) =
             (self.in_game_menu_shown(), &self.phase, self.screen >= 1.0)
@@ -4605,11 +4681,35 @@ fn up(level: u8, step: u8, max: u8) -> u8 {
     level.saturating_add(step).min(max)
 }
 
-fn governor_value(governor: Governor) -> QuickValue {
-    match governor {
-        Governor::Powersave => QuickValue::Powersave,
-        Governor::Ondemand => QuickValue::Ondemand,
-        Governor::Performance => QuickValue::Performance,
+// The overlay averages over the last second and is redrawn every quarter of one.
+const PERF_WINDOW_MS: Millis = 1000;
+const PERF_STEP_MS: Millis = 250;
+
+#[derive(Default)]
+struct PerfMeter {
+    // When each quarter second began, and the frames shown by then, oldest first.
+    samples: VecDeque<(Millis, u64)>,
+    text: Option<String>,
+}
+
+pub fn perf_line(fps: f64, mhz: Option<u32>) -> String {
+    match mhz {
+        Some(mhz) => format!("{fps:.1} FPS  {mhz} MHz"),
+        None => format!("{fps:.1} FPS"),
+    }
+}
+
+// A GBA game has the CPU at its full clock, on either core, as muOS gives mGBA; everything else,
+// the shelf and the Game Boy games included, lets the kernel clock it to the load.
+pub fn full_clock_for(platform: Platform) -> bool {
+    platform == Platform::Gba
+}
+
+pub fn governor_for(full_clock: bool) -> &'static str {
+    if full_clock {
+        "performance"
+    } else {
+        "ondemand"
     }
 }
 

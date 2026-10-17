@@ -299,6 +299,7 @@ pub struct StubPlatform {
     read_only: Arc<std::sync::atomic::AtomicBool>,
     card_log: Option<PathBuf>,
     governors: Arc<Mutex<Vec<String>>>,
+    cpu_khz: Option<u32>,
 }
 
 pub fn led_code(state: LedState) -> u8 {
@@ -379,6 +380,7 @@ fn rig_with_led(
         read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         card_log: None,
         governors: Arc::default(),
+        cpu_khz: None,
     };
     (
         Power::new(Box::new(platform), timeout),
@@ -461,6 +463,10 @@ impl Platform for StubPlatform {
 
     fn set_rumble(&mut self, _strength: u16) {}
 
+    fn cpu_khz(&self) -> Option<u32> {
+        self.cpu_khz
+    }
+
     fn set_governor(&mut self, governor: &str) {
         self.governors
             .lock()
@@ -515,6 +521,7 @@ pub fn app_playing_with_jack(root: &Path, stem: &str) -> (App, Arc<std::sync::at
         read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         card_log: None,
         governors: Arc::default(),
+        cpu_khz: None,
     };
     a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
     (a, jack)
@@ -535,6 +542,7 @@ pub fn app_booting_with_governors(root: &Path) -> (App, Arc<Mutex<Vec<String>>>)
         read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         card_log: None,
         governors: governors.clone(),
+        cpu_khz: None,
     };
     a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
     (a, governors)
@@ -565,6 +573,7 @@ pub fn app_playing_with_card_log(
         read_only: read_only.clone(),
         card_log,
         governors: Arc::default(),
+        cpu_khz: None,
     };
     a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
     (a, read_only)
@@ -626,6 +635,37 @@ pub fn app_playing_with(root: &Path, stem: &str, snapshot: Box<dyn Snapshot>) ->
             ..Default::default()
         },
     )
+}
+
+// Playing with the FPS & CPU overlay on, on a CPU that runs at khz.
+pub fn app_playing_with_overlay(root: &Path, stem: &str, khz: Option<u32>) -> App {
+    let mut a = seated(
+        root,
+        StubSnapshot::boxed(),
+        SlotState {
+            cart: Some(stem.to_string()),
+            clock_set: true,
+            utc_offset_min: 0,
+            perf_overlay: true,
+            ..Default::default()
+        },
+    );
+    let platform = StubPlatform {
+        backlight: Arc::new(AtomicU8::new(0)),
+        root: root.to_path_buf(),
+        clock: Clock::at(CLOCK_IS_SET),
+        charge: Arc::new(AtomicU8::new(0)),
+        percent: Arc::new(AtomicU8::new(50)),
+        led: Arc::new(AtomicU8::new(u8::MAX)),
+        led_writes: Arc::new(AtomicUsize::new(0)),
+        headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        card_log: None,
+        governors: Arc::default(),
+        cpu_khz: khz,
+    };
+    a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
+    a
 }
 
 fn seated(root: &Path, snapshot: Box<dyn Snapshot>, state: SlotState) -> App {

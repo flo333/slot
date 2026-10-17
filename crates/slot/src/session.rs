@@ -285,6 +285,7 @@ impl Session {
         }
         self.sync_core();
         self.sync_reload();
+        self.app.set_core_running(self.emu.is_some());
         if !self.has_core() {
             for action in self.gestures.drop_ff_latch() {
                 self.act(action);
@@ -298,6 +299,12 @@ impl Session {
         self.sync_speed();
         self.sync_rewind_hud();
         self.sync_ff_hud();
+        if self.playing() {
+            let shown = self.frames_published();
+            self.app.note_frames(shown);
+        } else {
+            self.app.pause_perf();
+        }
         self.sync_rumble();
         self.sync_pad();
         let now = self.app.now();

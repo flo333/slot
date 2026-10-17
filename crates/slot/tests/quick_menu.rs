@@ -1,14 +1,14 @@
 mod common;
 
 use common::{
-    app_booting_at, app_booting_with_clock, app_booting_with_governors, app_playing_in,
-    tmp_root_with_carts, Clock, CLOCK_IS_SET,
+    app_booting_at, app_booting_with_clock, app_playing_in, tmp_root_with_carts, Clock,
+    CLOCK_IS_SET,
 };
 use slot::app::{App, Phase};
 use slot_input::{Action, Btn};
 use slot_store::{
-    read_slot_state, write_slot_state, Appearance, BezelPick, Governor, Platform, Shader,
-    SlotState, WallpaperPick,
+    read_slot_state, write_slot_state, Appearance, BezelPick, Platform, Shader, SlotState,
+    WallpaperPick,
 };
 use slot_ui::{
     Draw, Icon, QuickMenuFaces, QuickRow, QuickValue, TexId, HINT_EDGE, MENU_PAD, MOUTH_H, OUT_H,
@@ -284,65 +284,6 @@ fn run_ahead_steps_through_its_frames_wraps_at_both_ends_and_saves_each_one() {
 }
 
 #[test]
-fn the_saved_governor_reaches_the_cpu_at_boot() {
-    let d = tmp_root_with_carts(&["Emerald"]);
-    write_slot_state(
-        d.path(),
-        &SlotState {
-            clock_set: true,
-            cpu_governor: Governor::Ondemand,
-            ..SlotState::default()
-        },
-    )
-    .expect("write slot.state");
-    let (_a, governors) = app_booting_with_governors(d.path());
-    assert_eq!(*governors.lock().unwrap(), ["ondemand"]);
-}
-
-#[test]
-fn the_governor_row_steps_through_all_three_saves_each_and_sets_it_at_once() {
-    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
-    write_slot_state(
-        d.path(),
-        &SlotState {
-            clock_set: true,
-            ..SlotState::default()
-        },
-    )
-    .expect("write slot.state");
-    let (mut a, governors) = app_booting_with_governors(d.path());
-    assert_eq!(
-        *governors.lock().unwrap(),
-        ["performance"],
-        "boot did not keep the device on the governor it runs by itself"
-    );
-    open_at(&mut a, QuickRow::CpuGovernor);
-    assert_eq!(
-        a.quick_value(QuickRow::CpuGovernor),
-        Some(QuickValue::Performance)
-    );
-    for (btn, want, value) in [
-        (Btn::Right, Governor::Powersave, QuickValue::Powersave),
-        (Btn::Right, Governor::Ondemand, QuickValue::Ondemand),
-        (Btn::Right, Governor::Performance, QuickValue::Performance),
-        (Btn::Left, Governor::Ondemand, QuickValue::Ondemand),
-    ] {
-        press(&mut a, btn);
-        assert_eq!(a.quick_value(QuickRow::CpuGovernor), Some(value), "{btn:?}");
-        assert_eq!(
-            read_slot_state(d.path()).cpu_governor,
-            want,
-            "not on the card"
-        );
-        assert_eq!(
-            governors.lock().unwrap().last().map(String::as_str),
-            Some(want.key()),
-            "{btn:?} did not reach the cpu"
-        );
-    }
-}
-
-#[test]
 fn rumble_and_fast_forward_sound_flip_on_either_arrow_and_save() {
     let (d, mut a, _) = on_carousel();
     let card = |d: &TempDir| {
@@ -421,7 +362,6 @@ fn the_game_page_flips_eject_save_turbo_and_rewind_and_saves_each() {
     press(&mut a, Btn::Right);
     assert_eq!(card(&d), (true, true, false));
     assert!(!a.may_rewind(), "rewind still offered with it off");
-    press(&mut a, Btn::Down);
     press(&mut a, Btn::Down);
     press(&mut a, Btn::Left);
     assert_eq!(card(&d), (true, false, false));
@@ -1063,6 +1003,7 @@ fn no_row_in_hand_runs_its_arrows_into_its_label() {
         &QuickRow::SCREEN_GBC[..],
         &QuickRow::SCREEN_GB[..],
         &QuickRow::GAME[..],
+        &QuickRow::ADVANCED[..],
         &QuickRow::GENERAL[..],
     ] {
         for &row in page {
@@ -1325,4 +1266,40 @@ fn idle_loop_detection_flips_both_ways_and_saves_each() {
             "not on the card"
         );
     }
+}
+
+#[test]
+fn the_fps_overlay_flips_both_ways_and_saves_each() {
+    let (d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::PerfOverlay);
+    assert_eq!(a.quick_value(QuickRow::PerfOverlay), Some(QuickValue::Off));
+    for (btn, want) in [(Btn::Right, true), (Btn::Left, false)] {
+        press(&mut a, btn);
+        assert_eq!(
+            a.quick_value(QuickRow::PerfOverlay),
+            Some(QuickValue::flag(want)),
+            "{btn:?}"
+        );
+        assert_eq!(
+            read_slot_state(d.path()).perf_overlay,
+            want,
+            "not on the card"
+        );
+    }
+}
+
+#[test]
+fn advanced_opens_from_the_bottom_of_gameplay_and_b_comes_back_to_it() {
+    let (_d, mut a, _) = on_carousel();
+    open_at(&mut a, QuickRow::EjectSave);
+    press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::Advanced));
+    press(&mut a, Btn::A);
+    assert_eq!(a.quick_menu(), Some(QuickRow::RunAhead));
+    press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::IdleLoop));
+    press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::PerfOverlay));
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::Advanced));
 }

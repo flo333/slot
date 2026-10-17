@@ -49,12 +49,13 @@ pub enum QuickRow {
     GbaBezel,
     ScreenGbc,
     ScreenGb,
-    CpuGovernor,
     IdleLoop,
+    PerfOverlay,
+    Advanced,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 42] = [
+    pub const ALL: [QuickRow; 43] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -95,8 +96,9 @@ impl QuickRow {
         QuickRow::GbaBezel,
         QuickRow::ScreenGbc,
         QuickRow::ScreenGb,
-        QuickRow::CpuGovernor,
         QuickRow::IdleLoop,
+        QuickRow::PerfOverlay,
+        QuickRow::Advanced,
     ];
 
     pub const MAIN: [QuickRow; 4] = [
@@ -137,16 +139,20 @@ impl QuickRow {
         QuickRow::GbBezel,
     ];
 
-    pub const GAME: [QuickRow; 9] = [
+    pub const GAME: [QuickRow; 7] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Rewind,
-        QuickRow::RunAhead,
         QuickRow::Turbo,
         QuickRow::Rumble,
         QuickRow::EjectSave,
-        QuickRow::CpuGovernor,
+        QuickRow::Advanced,
+    ];
+
+    pub const ADVANCED: [QuickRow; 3] = [
+        QuickRow::RunAhead,
         QuickRow::IdleLoop,
+        QuickRow::PerfOverlay,
     ];
 
     pub const PLAY: [QuickRow; 4] = [
@@ -185,12 +191,11 @@ impl QuickRow {
             QuickRow::FastForward
             | QuickRow::FastForwardSound
             | QuickRow::Rewind
-            | QuickRow::RunAhead
             | QuickRow::Turbo
             | QuickRow::Rumble
             | QuickRow::EjectSave
-            | QuickRow::CpuGovernor
-            | QuickRow::IdleLoop => &QuickRow::GAME,
+            | QuickRow::Advanced => &QuickRow::GAME,
+            QuickRow::RunAhead | QuickRow::IdleLoop | QuickRow::PerfOverlay => &QuickRow::ADVANCED,
             QuickRow::Wallpaper
             | QuickRow::WallpaperTint
             | QuickRow::DateTime
@@ -215,6 +220,7 @@ impl QuickRow {
             QuickRow::GbcShader => Some(QuickRow::ScreenGbc),
             QuickRow::GbShader => Some(QuickRow::ScreenGb),
             QuickRow::FastForward => Some(QuickRow::Game),
+            QuickRow::RunAhead => Some(QuickRow::Advanced),
             QuickRow::Wallpaper => Some(QuickRow::General),
             QuickRow::PlayScreen => Some(QuickRow::Settings),
             QuickRow::Shader => Some(QuickRow::PlayScreen),
@@ -247,6 +253,7 @@ impl QuickRow {
             QuickRow::Settings => Some(QuickRow::SETTINGS[0]),
             QuickRow::PlayScreen => Some(QuickRow::PLAY_SCREEN[0]),
             QuickRow::PlayGameplay => Some(QuickRow::GAME[0]),
+            QuickRow::Advanced => Some(QuickRow::ADVANCED[0]),
             QuickRow::ScreenGba => Some(QuickRow::SCREEN_GBA[0]),
             QuickRow::ScreenGbc => Some(QuickRow::SCREEN_GBC[0]),
             QuickRow::ScreenGb => Some(QuickRow::SCREEN_GB[0]),
@@ -311,8 +318,9 @@ impl QuickRow {
             QuickRow::GbcBezel => "Bezel",
             QuickRow::GbaBezel => "Bezel",
             QuickRow::Bezel => "Bezel",
-            QuickRow::CpuGovernor => "CPU Governor",
             QuickRow::IdleLoop => "Idle Loop Detection",
+            QuickRow::PerfOverlay => "Performance Overlay",
+            QuickRow::Advanced => "Advanced",
         }
     }
 
@@ -330,6 +338,7 @@ impl QuickRow {
                 | QuickRow::ExitGame
                 | QuickRow::PlayScreen
                 | QuickRow::PlayGameplay
+                | QuickRow::Advanced
                 | QuickRow::ScreenGba
                 | QuickRow::ScreenGbc
                 | QuickRow::ScreenGb
@@ -367,13 +376,10 @@ pub enum QuickValue {
     Low,
     Medium,
     High,
-    Powersave,
-    Ondemand,
-    Performance,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 21] = [
+    pub const ALL: [QuickValue; 18] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -392,9 +398,6 @@ impl QuickValue {
         QuickValue::Low,
         QuickValue::Medium,
         QuickValue::High,
-        QuickValue::Powersave,
-        QuickValue::Ondemand,
-        QuickValue::Performance,
     ];
 
     pub fn index(self) -> usize {
@@ -421,9 +424,6 @@ impl QuickValue {
             QuickValue::Low => "25%",
             QuickValue::Medium => "45%",
             QuickValue::High => "65%",
-            QuickValue::Powersave => "Powersave",
-            QuickValue::Ondemand => "Ondemand",
-            QuickValue::Performance => "Performance",
         }
     }
 

@@ -52,6 +52,11 @@ pub trait Platform: Send {
     // The kernel's name for a cpufreq governor, as sysfs spells it.
     fn set_governor(&mut self, _governor: &str) {}
 
+    // What the first core runs at right now, in kHz as sysfs counts.
+    fn cpu_khz(&self) -> Option<u32> {
+        None
+    }
+
     fn relink_adb(&mut self) -> bool {
         false
     }

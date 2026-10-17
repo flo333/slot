@@ -608,6 +608,11 @@ impl Platform for DevicePlatform {
         }
     }
 
+    fn cpu_khz(&self) -> Option<u32> {
+        let policy = self.cpufreq.first()?;
+        read_number(&policy.join("scaling_cur_freq"))
+    }
+
     fn set_governor(&mut self, governor: &str) {
         for policy in &self.cpufreq {
             let name = policy

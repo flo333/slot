@@ -561,3 +561,18 @@ fn cpu_directories_that_are_not_cores_are_left_alone() {
     assert_eq!(idle_disabled(&d, "cpufreq", "state1"), "0");
     assert_eq!(idle_disabled(&d, "cpuidle", "state1"), "0");
 }
+
+#[test]
+fn the_cpu_clock_is_read_from_the_first_policy() {
+    let d = cpufreq_tree(&[("policy0", "performance"), ("policy4", "performance")]);
+    let policies = d.path().join("devices/system/cpu/cpufreq");
+    fs::write(policies.join("policy0/scaling_cur_freq"), "1512000\n").unwrap();
+    fs::write(policies.join("policy4/scaling_cur_freq"), "408000\n").unwrap();
+    assert_eq!(platform(&d).cpu_khz(), Some(1_512_000));
+}
+
+#[test]
+fn a_tree_with_no_cpufreq_says_no_clock() {
+    let d = tempfile::tempdir().unwrap();
+    assert_eq!(platform(&d).cpu_khz(), None);
+}

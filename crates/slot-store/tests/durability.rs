@@ -2,8 +2,8 @@ mod common;
 
 use common::tmp_root;
 use slot_store::{
-    atomic_write, read_slot_state, write_slot_state, Appearance, BezelPick, GbPalette, Governor,
-    Platform, Recent, Shader, SlotState, WallpaperPick, WallpaperTint, FF_SPEEDS, FF_SPEED_DEFAULT,
+    atomic_write, read_slot_state, write_slot_state, Appearance, BezelPick, GbPalette, Platform,
+    Recent, Shader, SlotState, WallpaperPick, WallpaperTint, FF_SPEEDS, FF_SPEED_DEFAULT,
 };
 use tempfile::tempdir;
 
@@ -175,12 +175,8 @@ fn a_first_boot_rumbles_and_fast_forwards_silently_at_the_default() {
     assert_eq!(s.shader_gba, Shader::Grid);
     assert_eq!(s.shader_gb, Shader::Simpletex);
     assert_eq!(s.runahead, 0, "boots with run-ahead on");
-    assert_eq!(
-        s.cpu_governor,
-        Governor::Performance,
-        "boots on a governor other than the one the device runs by itself"
-    );
     assert!(!s.idle_detect, "boots with mGBA guessing at idle loops");
+    assert!(!s.perf_overlay, "boots with the FPS overlay over the game");
 }
 
 #[test]
@@ -227,8 +223,8 @@ fn a_card_from_before_the_settings_keeps_all_its_values() {
             bezel_gba: BezelPick::Ags102,
             bezel_gb: BezelPick::Ags102,
             bezel_gbc: BezelPick::Ags102,
-            cpu_governor: Governor::Performance,
             idle_detect: false,
+            perf_overlay: false,
             recents: Vec::new(),
             favorites: Vec::new(),
             shelf: None,
@@ -261,8 +257,8 @@ fn the_quick_menu_settings_round_trip_as_their_own_lines() {
         bezel_gba: BezelPick::None,
         bezel_gb: BezelPick::Default,
         bezel_gbc: BezelPick::File("Pocket.png".into()),
-        cpu_governor: Governor::Ondemand,
         idle_detect: true,
+        perf_overlay: true,
         shelf: Some("gba".into()),
         shelf_cart: Some(Recent {
             platform: Platform::Gba,
@@ -294,8 +290,8 @@ fn the_quick_menu_settings_round_trip_as_their_own_lines() {
         "bezel_gbc=Pocket.png",
         "colour_correction_gbc=1",
         "shader_gbc=grid",
-        "cpu_governor=ondemand",
         "idle_detect=1",
+        "perf_overlay=1",
         "shelf=gba",
         "shelf_cart=gba/Drill Dozer",
     ] {
@@ -304,37 +300,23 @@ fn the_quick_menu_settings_round_trip_as_their_own_lines() {
 }
 
 #[test]
-fn every_governor_round_trips_and_one_the_row_does_not_offer_reads_as_performance() {
-    for governor in Governor::ALL {
-        let d = tmp_root();
-        let s = SlotState {
-            cpu_governor: governor,
-            ..SlotState::default()
-        };
-        write_slot_state(d.path(), &s).unwrap();
-        assert_eq!(read_slot_state(d.path()).cpu_governor, governor);
-    }
+fn a_card_from_when_the_governor_was_a_setting_keeps_the_rest() {
     let d = tmp_root();
     let s = SlotState {
         clock_set: true,
-        cpu_governor: Governor::Powersave,
+        perf_overlay: true,
         ..SlotState::default()
     };
     write_slot_state(d.path(), &s).unwrap();
     let path = d.path().join("Config/slot.state");
     let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(
-        &path,
-        text.replace("cpu_governor=powersave", "cpu_governor=schedutil"),
-    )
-    .unwrap();
-    assert_eq!(
-        read_slot_state(d.path()).cpu_governor,
-        Governor::Performance
-    );
+    std::fs::write(&path, format!("cpu_governor=powersave\n{text}")).unwrap();
+    assert_eq!(read_slot_state(d.path()), s);
+    write_slot_state(d.path(), &s).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
     assert!(
-        read_slot_state(d.path()).clock_set,
-        "the rest of the card was thrown away with it"
+        !text.contains("cpu_governor"),
+        "the old line was written back: {text:?}"
     );
 }
 

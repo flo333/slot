@@ -2,7 +2,7 @@ use slot_gfx::{Canvas, Draw, TexId, OUT_H};
 use slot_power::Battery;
 
 use crate::battery::{draw_gauge, GAUGE_H};
-use crate::hud::{HUD_INK, PLATE_H};
+use crate::hud::{HUD_INK, PLATE, PLATE_H};
 use crate::plate::HINT_H;
 use crate::slot_chrome::MOUTH_H;
 
@@ -51,6 +51,24 @@ pub fn draw_corners(
     draw_gauge(CORNER_MARGIN, y, battery, percent, bolt, HUD_INK, out);
     let x = canvas.w - CORNER_MARGIN - clock.w as f32;
     draw_printed(x, (PLATE_H - HINT_H as f32) / 2.0, clock, out);
+}
+
+const PERF_PAD: f32 = 6.0;
+
+// The frame rate and CPU clock, on a plate of its own in the bottom left corner over the game.
+pub fn draw_perf(perf: Printed, out: &mut Vec<Draw>) {
+    if perf.w == 0 {
+        return;
+    }
+    let y = OUT_H as f32 - CORNER_MARGIN - HINT_H as f32;
+    out.push(Draw::Rect {
+        x: CORNER_MARGIN - PERF_PAD,
+        y: y - PERF_PAD / 2.0,
+        w: perf.w as f32 + 2.0 * PERF_PAD,
+        h: HINT_H as f32 + PERF_PAD,
+        colour: PLATE,
+    });
+    draw_printed(CORNER_MARGIN, y, perf, out);
 }
 
 pub(crate) fn draw_printed(x: f32, y: f32, p: Printed, out: &mut Vec<Draw>) {

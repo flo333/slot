@@ -129,13 +129,15 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Fast Forward",
             "Fast Forward Sound",
             "Rewind",
-            "Run-Ahead",
             "Turbo Buttons",
             "Rumble",
             "Auto Save on Eject",
-            "CPU Governor",
-            "Idle Loop Detection"
+            "Advanced"
         ]
+    );
+    assert_eq!(
+        QuickRow::ADVANCED.map(QuickRow::label),
+        ["Run-Ahead", "Idle Loop Detection", "Performance Overlay"]
     );
     let opens: Vec<QuickRow> = QuickRow::ALL.into_iter().filter(|r| r.opens()).collect();
     assert_eq!(
@@ -154,13 +156,15 @@ fn the_rows_run_in_the_order_the_user_chose() {
             QuickRow::PlayGameplay,
             QuickRow::ScreenGba,
             QuickRow::ScreenGbc,
-            QuickRow::ScreenGb
+            QuickRow::ScreenGb,
+            QuickRow::Advanced
         ]
     );
     for page in [
         &QuickRow::MAIN[..],
         &QuickRow::SCREEN[..],
         &QuickRow::GAME[..],
+        &QuickRow::ADVANCED[..],
         &QuickRow::GENERAL[..],
         &QuickRow::PLAY[..],
         &QuickRow::SETTINGS[..],
@@ -214,9 +218,6 @@ fn the_values_read_as_the_menu_prints_them() {
             "25%",
             "45%",
             "65%",
-            "Powersave",
-            "Ondemand",
-            "Performance",
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
@@ -441,4 +442,19 @@ fn show_titles_sits_under_recents_on_the_general_page() {
         at(QuickRow::Recents).map(|i| i + 1)
     );
     assert_eq!(QuickRow::ShowTitles.parent(), Some(QuickRow::General));
+}
+
+#[test]
+fn advanced_sits_at_the_bottom_of_gameplay_and_its_rows_go_back_to_it() {
+    assert_eq!(QuickRow::GAME.last(), Some(&QuickRow::Advanced));
+    assert_eq!(QuickRow::Advanced.child(), Some(QuickRow::RunAhead));
+    for row in QuickRow::ADVANCED {
+        assert_eq!(row.parent(), Some(QuickRow::Advanced), "{row:?}");
+        assert_eq!(row.parent_in_game(), Some(QuickRow::Advanced), "{row:?}");
+    }
+    assert_eq!(QuickRow::Advanced.parent(), Some(QuickRow::Game));
+    assert_eq!(
+        QuickRow::Advanced.parent_in_game(),
+        Some(QuickRow::PlayGameplay)
+    );
 }
