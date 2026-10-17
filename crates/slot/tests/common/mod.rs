@@ -298,6 +298,7 @@ pub struct StubPlatform {
     headphones: Arc<std::sync::atomic::AtomicBool>,
     read_only: Arc<std::sync::atomic::AtomicBool>,
     card_log: Option<PathBuf>,
+    governors: Arc<Mutex<Vec<String>>>,
 }
 
 pub fn led_code(state: LedState) -> u8 {
@@ -377,6 +378,7 @@ fn rig_with_led(
         headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         card_log: None,
+        governors: Arc::default(),
     };
     (
         Power::new(Box::new(platform), timeout),
@@ -459,6 +461,13 @@ impl Platform for StubPlatform {
 
     fn set_rumble(&mut self, _strength: u16) {}
 
+    fn set_governor(&mut self, governor: &str) {
+        self.governors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(governor.to_string());
+    }
+
     fn headphones(&self) -> bool {
         self.headphones.load(Ordering::Relaxed)
     }
@@ -505,9 +514,30 @@ pub fn app_playing_with_jack(root: &Path, stem: &str) -> (App, Arc<std::sync::at
         headphones: jack.clone(),
         read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         card_log: None,
+        governors: Arc::default(),
     };
     a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
     (a, jack)
+}
+
+pub fn app_booting_with_governors(root: &Path) -> (App, Arc<Mutex<Vec<String>>>) {
+    let mut a = App::boot(root);
+    let governors = Arc::new(Mutex::new(Vec::new()));
+    let platform = StubPlatform {
+        backlight: Arc::new(AtomicU8::new(0)),
+        root: root.to_path_buf(),
+        clock: Clock::at(CLOCK_IS_SET),
+        charge: Arc::new(AtomicU8::new(0)),
+        percent: Arc::new(AtomicU8::new(50)),
+        led: Arc::new(AtomicU8::new(u8::MAX)),
+        led_writes: Arc::new(AtomicUsize::new(0)),
+        headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        read_only: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        card_log: None,
+        governors: governors.clone(),
+    };
+    a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
+    (a, governors)
 }
 
 pub const STUB_KERNEL_LINE: &str = "FAT-fs (mmcblk0p7): error, invalid access to FAT";
@@ -534,6 +564,7 @@ pub fn app_playing_with_card_log(
         headphones: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         read_only: read_only.clone(),
         card_log,
+        governors: Arc::default(),
     };
     a.set_power(Power::new(Box::new(platform), Duration::from_secs(300)));
     (a, read_only)

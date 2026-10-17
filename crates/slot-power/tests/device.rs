@@ -435,3 +435,129 @@ fn the_kernel_log_keeps_the_latest_card_lines() {
     assert_eq!(kept.len(), 40);
     assert_eq!(kept.last().unwrap(), "[99] FAT-fs (mmcblk0p7): line 99");
 }
+
+fn cpufreq_tree(policies: &[(&str, &str)]) -> TempDir {
+    let d = tempfile::tempdir().unwrap();
+    for (name, offered) in policies {
+        let dir = d.path().join("devices/system/cpu/cpufreq").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("scaling_governor"), "performance\n").unwrap();
+        fs::write(
+            dir.join("scaling_available_governors"),
+            format!("{offered} \n"),
+        )
+        .unwrap();
+    }
+    d
+}
+
+fn governor_of(d: &TempDir, policy: &str) -> String {
+    fs::read_to_string(
+        d.path()
+            .join("devices/system/cpu/cpufreq")
+            .join(policy)
+            .join("scaling_governor"),
+    )
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+#[test]
+fn the_governor_reaches_every_policy() {
+    let all = "interactive conservative ondemand userspace powersave performance schedutil";
+    let d = cpufreq_tree(&[("policy0", all), ("policy4", all)]);
+    let mut p = platform(&d);
+    for governor in ["powersave", "ondemand", "performance"] {
+        p.set_governor(governor);
+        assert_eq!(governor_of(&d, "policy0"), governor);
+        assert_eq!(governor_of(&d, "policy4"), governor);
+    }
+}
+
+#[test]
+fn a_governor_a_policy_does_not_offer_leaves_that_one_as_it_was() {
+    let d = cpufreq_tree(&[
+        ("policy0", "powersave performance"),
+        ("policy4", "ondemand powersave performance"),
+    ]);
+    let mut p = platform(&d);
+    p.set_governor("ondemand");
+    assert_eq!(governor_of(&d, "policy0"), "performance");
+    assert_eq!(governor_of(&d, "policy4"), "ondemand");
+}
+
+#[test]
+fn a_tree_with_no_cpufreq_ignores_the_governor() {
+    let d = tempfile::tempdir().unwrap();
+    let mut p = platform(&d);
+    p.set_governor("powersave");
+    assert!(!d.path().join("devices").exists());
+}
+
+fn cpuidle_tree(d: &TempDir, cpus: &[&str], states: &[&str]) {
+    for cpu in cpus {
+        for state in states {
+            let dir = d
+                .path()
+                .join("devices/system/cpu")
+                .join(cpu)
+                .join("cpuidle")
+                .join(state);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("disable"), "0\n").unwrap();
+        }
+    }
+}
+
+fn idle_disabled(d: &TempDir, cpu: &str, state: &str) -> String {
+    fs::read_to_string(
+        d.path()
+            .join("devices/system/cpu")
+            .join(cpu)
+            .join("cpuidle")
+            .join(state)
+            .join("disable"),
+    )
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+#[test]
+fn performance_keeps_every_core_out_of_deep_idle_and_the_others_let_it_back_in() {
+    let all = "ondemand powersave performance";
+    let d = cpufreq_tree(&[("policy0", all)]);
+    cpuidle_tree(&d, &["cpu0", "cpu3"], &["state0", "state1", "state2"]);
+    let mut p = platform(&d);
+
+    p.set_governor("performance");
+    for cpu in ["cpu0", "cpu3"] {
+        assert_eq!(
+            idle_disabled(&d, cpu, "state0"),
+            "0",
+            "{cpu} lost its plain idle"
+        );
+        assert_eq!(idle_disabled(&d, cpu, "state1"), "1", "{cpu}");
+        assert_eq!(idle_disabled(&d, cpu, "state2"), "1", "{cpu}");
+    }
+
+    for governor in ["ondemand", "powersave"] {
+        p.set_governor("performance");
+        p.set_governor(governor);
+        for cpu in ["cpu0", "cpu3"] {
+            assert_eq!(idle_disabled(&d, cpu, "state1"), "0", "{governor} {cpu}");
+            assert_eq!(idle_disabled(&d, cpu, "state2"), "0", "{governor} {cpu}");
+        }
+    }
+}
+
+#[test]
+fn cpu_directories_that_are_not_cores_are_left_alone() {
+    let d = cpufreq_tree(&[("policy0", "performance")]);
+    cpuidle_tree(&d, &["cpufreq", "cpuidle"], &["state1"]);
+    let mut p = platform(&d);
+    p.set_governor("performance");
+    assert_eq!(idle_disabled(&d, "cpufreq", "state1"), "0");
+    assert_eq!(idle_disabled(&d, "cpuidle", "state1"), "0");
+}

@@ -9,6 +9,9 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn dylib() -> PathBuf {
+    if let Some(p) = std::env::var_os("SLOT_TEST_CORE") {
+        return p.into();
+    }
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/mgba_libretro.dylib")
 }
 
@@ -235,4 +238,31 @@ fn mgba_states_repeat_and_load_with_trailing_padding() {
         .expect("mGBA refused a state with zeros after it");
     c.run_frame(ButtonMask::default());
     assert_eq!(c.video_xrgb8888(), expected);
+}
+
+#[test]
+fn run_aheads_save_and_load_every_frame_keeps_each_state_whole() {
+    let _g = lock();
+    let Some(mut c) = test_core() else { return };
+    c.load(&test_rom()).unwrap();
+    c.run_frame(ButtonMask::default());
+    let first = c.serialize().unwrap();
+    let mut state = first.clone();
+    for _ in 0..30 {
+        c.run_frame(ButtonMask::default());
+        state = c.serialize().unwrap();
+        assert_eq!(state.len(), first.len());
+        c.run_frame(ButtonMask::default());
+        c.unserialize(&state).unwrap();
+    }
+    c.run_frame(ButtonMask::default());
+    let ahead = c.video_xrgb8888().to_vec();
+    c.unserialize(&state).unwrap();
+    c.run_frame(ButtonMask::default());
+    assert_eq!(
+        ahead,
+        c.video_xrgb8888(),
+        "a state no longer restores what it saved"
+    );
+    assert_eq!(c.serialize().unwrap().len(), first.len());
 }

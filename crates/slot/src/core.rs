@@ -42,14 +42,22 @@ pub fn open_core(
     core: Core,
     platform: Platform,
     serial: &str,
-    code: &str,
+    idle_detect: bool,
     colour: bool,
     palette: Option<GbPalette>,
     link: Option<u8>,
 ) -> Opened {
     let paths = candidates(root, core);
     match open_named(
-        root, core, platform, serial, code, colour, palette, link, &paths,
+        root,
+        core,
+        platform,
+        serial,
+        idle_detect,
+        colour,
+        palette,
+        link,
+        &paths,
     ) {
         Some(core) => Opened { core, named: true },
         None => {
@@ -82,7 +90,7 @@ pub fn open_core_for_palette(
     paths: &[PathBuf],
 ) -> Box<dyn RetroCore> {
     open_named(
-        root, core, platform, serial, "", colour, palette, None, paths,
+        root, core, platform, serial, false, colour, palette, None, paths,
     )
     .unwrap_or_else(|| {
         report_missing(core, paths);
@@ -96,7 +104,7 @@ fn open_named(
     core: Core,
     platform: Platform,
     serial: &str,
-    code: &str,
+    idle_detect: bool,
     colour: bool,
     palette: Option<GbPalette>,
     link: Option<u8>,
@@ -119,10 +127,10 @@ fn open_named(
                     colour,
                     palette,
                 );
-                if let Some((key, value)) = idle_option(core, code) {
+                if let Some((key, value)) = idle_option(core, idle_detect) {
                     opened.set_option(key, value);
-                    if value == IDLE_DETECT {
-                        eprintln!("slot: core: idle loop detection on for {code}");
+                    if idle_detect {
+                        eprintln!("slot: core: idle loop detection on");
                     }
                 }
                 if let Some(player) = link {
@@ -189,15 +197,18 @@ pub fn colour_option(
     }
 }
 
-const IDLE_DETECT: &str = "Detect and Remove";
-
-// set mgba_idle_optimization to "Detect and Remove" for FireRed and LeafGreen
-pub fn idle_option(which: Core, code: &str) -> Option<(&'static str, &'static str)> {
+// mGBA skips the idle loops on its own list either way; detecting finds them in games it does not
+// know too, as FireRed, LeafGreen and Final Fantasy I & II need.
+pub fn idle_option(which: Core, detect: bool) -> Option<(&'static str, &'static str)> {
     match which {
-        Core::Mgba if code.starts_with("BPR") || code.starts_with("BPG") => {
-            Some(("mgba_idle_optimization", IDLE_DETECT))
-        }
-        Core::Mgba => Some(("mgba_idle_optimization", "Remove Known")),
+        Core::Mgba => Some((
+            "mgba_idle_optimization",
+            if detect {
+                "Detect and Remove"
+            } else {
+                "Remove Known"
+            },
+        )),
         Core::Gpsp => None,
     }
 }
@@ -260,22 +271,16 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn only_firered_and_leafgreen_have_mgba_look_for_their_idle_loop() {
-        for code in ["BPRE", "BPRD", "BPGE", "BPGJ"] {
-            assert_eq!(
-                idle_option(Core::Mgba, code),
-                Some(("mgba_idle_optimization", "Detect and Remove")),
-                "{code}"
-            );
-        }
-        for code in ["AXVE", "BPEE", "AMKE", ""] {
-            assert_eq!(
-                idle_option(Core::Mgba, code),
-                Some(("mgba_idle_optimization", "Remove Known")),
-                "{code:?}"
-            );
-        }
-        assert_eq!(idle_option(Core::Gpsp, "BPRE"), None);
+    fn mgba_looks_for_idle_loops_only_with_the_setting_on() {
+        assert_eq!(
+            idle_option(Core::Mgba, true),
+            Some(("mgba_idle_optimization", "Detect and Remove"))
+        );
+        assert_eq!(
+            idle_option(Core::Mgba, false),
+            Some(("mgba_idle_optimization", "Remove Known"))
+        );
+        assert_eq!(idle_option(Core::Gpsp, true), None);
     }
 
     #[test]

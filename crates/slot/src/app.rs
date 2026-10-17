@@ -8,7 +8,7 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, BezelPick, Cart, Core,
-    GbPalette, Platform, Recent, Shader, SlotState, StateEntry, StateRing, WallpaperPick,
+    GbPalette, Governor, Platform, Recent, Shader, SlotState, StateEntry, StateRing, WallpaperPick,
     WallpaperTint, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, RUN_AHEAD_MAX, VOLUME_MAX,
 };
 use slot_ui::{
@@ -895,6 +895,8 @@ impl App {
             QuickRow::Turbo => Some(QuickValue::flag(self.state.turbo)),
             QuickRow::Rewind => Some(QuickValue::flag(self.state.rewind)),
             QuickRow::RunAhead => QuickValue::frames(self.state.runahead),
+            QuickRow::CpuGovernor => Some(governor_value(self.state.cpu_governor)),
+            QuickRow::IdleLoop => Some(QuickValue::flag(self.state.idle_detect)),
             QuickRow::Recents => Some(if self.state.show_recents {
                 QuickValue::Show
             } else {
@@ -1469,6 +1471,11 @@ impl App {
         self.state.turbo
     }
 
+    // Read by mGBA as a game loads, so a change reaches the next game booted.
+    pub fn idle_detect(&self) -> bool {
+        self.state.idle_detect
+    }
+
     pub fn records_rewind(&self) -> bool {
         self.state.rewind
     }
@@ -1558,6 +1565,7 @@ impl App {
 
     pub fn set_power(&mut self, mut power: Power) {
         power.set_backlight(self.state.brightness);
+        power.set_governor(self.state.cpu_governor.key());
         self.headphones = power.headphones();
         self.hud.set_headphones(self.headphones);
         let secs = power.now();
@@ -2037,6 +2045,8 @@ impl App {
             | QuickRow::GbcShader
             | QuickRow::GbPalettes
             | QuickRow::RunAhead
+            | QuickRow::CpuGovernor
+            | QuickRow::IdleLoop
             | QuickRow::Rumble
             | QuickRow::Theme
             | QuickRow::Recents
@@ -2144,6 +2154,7 @@ impl App {
             QuickRow::EjectSave => s.eject_save = !s.eject_save,
             QuickRow::Turbo => s.turbo = !s.turbo,
             QuickRow::Rewind => s.rewind = !s.rewind,
+            QuickRow::IdleLoop => s.idle_detect = !s.idle_detect,
             QuickRow::GbPalettes => s.gb_palettes = !s.gb_palettes,
             QuickRow::RunAhead => {
                 let n = RUN_AHEAD_MAX + 1;
@@ -2151,6 +2162,12 @@ impl App {
             }
             QuickRow::Theme => s.appearance = s.appearance.toggle(),
             QuickRow::WallpaperTint => s.wallpaper_tint = s.wallpaper_tint.step(right),
+            QuickRow::CpuGovernor => {
+                s.cpu_governor = s.cpu_governor.step(right);
+                if let Some(power) = &mut self.power {
+                    power.set_governor(self.state.cpu_governor.key());
+                }
+            }
             QuickRow::Wallpaper
             | QuickRow::Recents
             | QuickRow::ShowTitles
@@ -4586,6 +4603,14 @@ fn trusted_write(
 
 fn up(level: u8, step: u8, max: u8) -> u8 {
     level.saturating_add(step).min(max)
+}
+
+fn governor_value(governor: Governor) -> QuickValue {
+    match governor {
+        Governor::Powersave => QuickValue::Powersave,
+        Governor::Ondemand => QuickValue::Ondemand,
+        Governor::Performance => QuickValue::Performance,
+    }
 }
 
 fn shader_value(shader: Shader) -> QuickValue {

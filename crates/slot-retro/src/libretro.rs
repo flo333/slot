@@ -642,6 +642,10 @@ impl RetroCore for LibretroCore {
             let _a = Active::bind(&mut self.host);
             unsafe { (self.api.unserialize)(data.as_ptr() as *const c_void, data.len()) }
         };
+        // A state of another length may bring another save chip with it, and so another size.
+        if self.state_size != Some(data.len()) {
+            self.state_size = None;
+        }
         if ok {
             Ok(())
         } else {

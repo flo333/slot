@@ -132,7 +132,9 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Run-Ahead",
             "Turbo Buttons",
             "Rumble",
-            "Auto Save on Eject"
+            "Auto Save on Eject",
+            "CPU Governor",
+            "Idle Loop Detection"
         ]
     );
     let opens: Vec<QuickRow> = QuickRow::ALL.into_iter().filter(|r| r.opens()).collect();
@@ -212,6 +214,9 @@ fn the_values_read_as_the_menu_prints_them() {
             "25%",
             "45%",
             "65%",
+            "Powersave",
+            "Ondemand",
+            "Performance",
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);

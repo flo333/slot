@@ -104,6 +104,45 @@ impl WallpaperTint {
     }
 }
 
+// The CPU frequency governor slot asks the kernel for. key() is the kernel's own name for it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Governor {
+    Powersave,
+    Ondemand,
+    #[default]
+    Performance,
+}
+
+impl Governor {
+    pub const ALL: [Governor; 3] = [
+        Governor::Powersave,
+        Governor::Ondemand,
+        Governor::Performance,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Governor::Powersave => "powersave",
+            Governor::Ondemand => "ondemand",
+            Governor::Performance => "performance",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Governor> {
+        Governor::ALL.into_iter().find(|g| g.key() == value)
+    }
+
+    pub fn step(self, right: bool) -> Governor {
+        let n = Governor::ALL.len();
+        let at = Governor::ALL.iter().position(|g| *g == self).unwrap_or(0);
+        Governor::ALL[if right {
+            (at + 1) % n
+        } else {
+            (at + n - 1) % n
+        }]
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub enum WallpaperPick {
     None,
@@ -227,6 +266,9 @@ pub struct SlotState {
     pub bezel_gba: BezelPick,
     pub bezel_gb: BezelPick,
     pub bezel_gbc: BezelPick,
+    pub cpu_governor: Governor,
+    // mGBA looks for each game's idle loop itself instead of knowing only its own list's.
+    pub idle_detect: bool,
     pub recents: Vec<Recent>,
     pub favorites: Vec<Recent>,
     pub shelf: Option<String>,
@@ -349,6 +391,8 @@ impl Default for SlotState {
             bezel_gba: BezelPick::Ags102,
             bezel_gb: BezelPick::Ags102,
             bezel_gbc: BezelPick::Ags102,
+            cpu_governor: Governor::Ondemand,
+            idle_detect: false,
             recents: Vec::new(),
             favorites: Vec::new(),
             shelf: None,
@@ -443,6 +487,8 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     text.push_str(&format!("bezel_gba={}\n", s.bezel_gba.key()));
     text.push_str(&format!("bezel_gb={}\n", s.bezel_gb.key()));
     text.push_str(&format!("bezel_gbc={}\n", s.bezel_gbc.key()));
+    text.push_str(&format!("cpu_governor={}\n", s.cpu_governor.key()));
+    text.push_str(&format!("idle_detect={}\n", s.idle_detect as u8));
     text.push_str(&format!("shelf={}\n", s.shelf.as_deref().unwrap_or("")));
     text.push_str(&format!(
         "shelf_cart={}\n",
@@ -492,6 +538,8 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut bezel_gba = None;
     let mut bezel_gb = None;
     let mut bezel_gbc = None;
+    let mut cpu_governor = None;
+    let mut idle_detect = None;
     let mut shelf = None;
     let mut shelf_cart = None;
     for line in text.lines().filter(|l| !l.is_empty()) {
@@ -531,6 +579,8 @@ fn parse(text: &str) -> Option<SlotState> {
             "bezel_gba" => bezel_gba = Some(BezelPick::parse(value)),
             "bezel_gb" => bezel_gb = Some(BezelPick::parse(value)),
             "bezel_gbc" => bezel_gbc = Some(BezelPick::parse(value)),
+            "cpu_governor" => cpu_governor = Governor::parse(value),
+            "idle_detect" => idle_detect = flag(value),
             "shelf" => shelf = Some(value.to_string()).filter(|v| !v.is_empty()),
             "shelf_cart" => shelf_cart = recent_value(value),
             "shader_gb" => shader_gb = Shader::parse(value).filter(|s| Shader::GB.contains(s)),
@@ -581,6 +631,8 @@ fn parse(text: &str) -> Option<SlotState> {
         bezel_gba: bezel_gba.unwrap_or(fallback.bezel_gba),
         bezel_gb: bezel_gb.unwrap_or(fallback.bezel_gb),
         bezel_gbc: bezel_gbc.unwrap_or(fallback.bezel_gbc),
+        cpu_governor: cpu_governor.unwrap_or(fallback.cpu_governor),
+        idle_detect: idle_detect.unwrap_or(fallback.idle_detect),
         recents: Vec::new(),
         favorites: Vec::new(),
         shelf,

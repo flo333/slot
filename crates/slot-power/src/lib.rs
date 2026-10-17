@@ -49,6 +49,9 @@ pub trait Platform: Send {
     fn set_clock(&mut self, secs: i64);
     fn set_rumble(&mut self, strength: u16);
 
+    // The kernel's name for a cpufreq governor, as sysfs spells it.
+    fn set_governor(&mut self, _governor: &str) {}
+
     fn relink_adb(&mut self) -> bool {
         false
     }

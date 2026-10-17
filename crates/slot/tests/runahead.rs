@@ -619,8 +619,12 @@ fn on_mgba_with_local_roms_run_ahead_plays_the_same_sound_as_off() {
     let root = tempfile::tempdir().expect("a temporary root");
     let mut wrong = Vec::new();
     for rom in roms {
-        // Into the intro and the title music, where most games are making some sound.
-        for warm in [1500, 3000] {
+        // Into the intro and the title music, where most games are making some sound, with mGBA
+        // looking for the idle loop and without, as the Idle Loop Detection row picks.
+        for (warm, detect) in [1500, 3000]
+            .into_iter()
+            .flat_map(|w| [(w, false), (w, true)])
+        {
             let mut core = LibretroCore::open_with(&dylib, root.path(), root.path())
                 .expect("the vendored core would not open, is another one still running?");
             apply_core_options(
@@ -632,9 +636,7 @@ fn on_mgba_with_local_roms_run_ahead_plays_the_same_sound_as_off() {
                 false,
                 None,
             );
-            // As slot opens it, so FireRed runs with its idle loop found.
-            let code = slot_store::header_code(&rom).unwrap_or_default();
-            if let Some((key, value)) = idle_option(Core::Mgba, &code) {
+            if let Some((key, value)) = idle_option(Core::Mgba, detect) {
                 core.set_option(key, value);
             }
             core.load(&rom).expect("the rom would not load");
@@ -654,9 +656,14 @@ fn on_mgba_with_local_roms_run_ahead_plays_the_same_sound_as_off() {
             let ahead = sound_run_ahead(&mut core, FRAMES);
             let differ = (0..FRAMES).filter(|&i| ahead[i] != off[i + 1]).count();
             let name = rom.file_name().unwrap_or_default().to_string_lossy();
-            eprintln!("{name} from frame {warm}: {differ} of {FRAMES} frames differ");
+            let idle = if detect { "detected" } else { "known" };
+            eprintln!(
+                "{name} from frame {warm}, idle loop {idle}: {differ} of {FRAMES} frames differ"
+            );
             if differ > 0 {
-                wrong.push(format!("{name} from frame {warm}: {differ}"));
+                wrong.push(format!(
+                    "{name} from frame {warm}, idle loop {idle}: {differ}"
+                ));
             }
         }
     }

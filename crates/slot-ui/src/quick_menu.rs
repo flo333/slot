@@ -49,10 +49,12 @@ pub enum QuickRow {
     GbaBezel,
     ScreenGbc,
     ScreenGb,
+    CpuGovernor,
+    IdleLoop,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 40] = [
+    pub const ALL: [QuickRow; 42] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -93,6 +95,8 @@ impl QuickRow {
         QuickRow::GbaBezel,
         QuickRow::ScreenGbc,
         QuickRow::ScreenGb,
+        QuickRow::CpuGovernor,
+        QuickRow::IdleLoop,
     ];
 
     pub const MAIN: [QuickRow; 4] = [
@@ -133,7 +137,7 @@ impl QuickRow {
         QuickRow::GbBezel,
     ];
 
-    pub const GAME: [QuickRow; 7] = [
+    pub const GAME: [QuickRow; 9] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Rewind,
@@ -141,6 +145,8 @@ impl QuickRow {
         QuickRow::Turbo,
         QuickRow::Rumble,
         QuickRow::EjectSave,
+        QuickRow::CpuGovernor,
+        QuickRow::IdleLoop,
     ];
 
     pub const PLAY: [QuickRow; 4] = [
@@ -182,7 +188,9 @@ impl QuickRow {
             | QuickRow::RunAhead
             | QuickRow::Turbo
             | QuickRow::Rumble
-            | QuickRow::EjectSave => &QuickRow::GAME,
+            | QuickRow::EjectSave
+            | QuickRow::CpuGovernor
+            | QuickRow::IdleLoop => &QuickRow::GAME,
             QuickRow::Wallpaper
             | QuickRow::WallpaperTint
             | QuickRow::DateTime
@@ -303,6 +311,8 @@ impl QuickRow {
             QuickRow::GbcBezel => "Bezel",
             QuickRow::GbaBezel => "Bezel",
             QuickRow::Bezel => "Bezel",
+            QuickRow::CpuGovernor => "CPU Governor",
+            QuickRow::IdleLoop => "Idle Loop Detection",
         }
     }
 
@@ -357,10 +367,13 @@ pub enum QuickValue {
     Low,
     Medium,
     High,
+    Powersave,
+    Ondemand,
+    Performance,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 18] = [
+    pub const ALL: [QuickValue; 21] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -379,6 +392,9 @@ impl QuickValue {
         QuickValue::Low,
         QuickValue::Medium,
         QuickValue::High,
+        QuickValue::Powersave,
+        QuickValue::Ondemand,
+        QuickValue::Performance,
     ];
 
     pub fn index(self) -> usize {
@@ -405,6 +421,9 @@ impl QuickValue {
             QuickValue::Low => "25%",
             QuickValue::Medium => "45%",
             QuickValue::High => "65%",
+            QuickValue::Powersave => "Powersave",
+            QuickValue::Ondemand => "Ondemand",
+            QuickValue::Performance => "Performance",
         }
     }
 

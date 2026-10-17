@@ -93,6 +93,8 @@ pub struct DevicePlatform {
     rtc: Option<PathBuf>,
     motor: Option<Motor>,
     led: Option<Led>,
+    cpufreq: Vec<PathBuf>,
+    cpuidle: Vec<PathBuf>,
 }
 
 impl DevicePlatform {
@@ -131,6 +133,8 @@ impl DevicePlatform {
                 Led::Mono { dir, max }
             }
         });
+        let cpufreq = cpufreq_policies(&sysfs.join("devices/system/cpu/cpufreq"));
+        let cpuidle = deep_idle_states(&sysfs.join("devices/system/cpu"));
         DevicePlatform {
             root,
             sysfs: sysfs.to_path_buf(),
@@ -140,6 +144,8 @@ impl DevicePlatform {
             rtc,
             motor,
             led,
+            cpufreq,
+            cpuidle,
         }
     }
 
@@ -380,6 +386,46 @@ fn first_dir(parent: &Path, keep: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     names.into_iter().find(|p| keep(p))
 }
 
+// Every cpuidle state's disable switch but state0's, which is the plain wait-for-interrupt every
+// core needs to idle at all.
+fn deep_idle_states(cpus: &Path) -> Vec<PathBuf> {
+    let mut states: Vec<PathBuf> = fs::read_dir(cpus)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.strip_prefix("cpu")
+                .is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .flat_map(|e| fs::read_dir(e.path().join("cpuidle")).into_iter().flatten())
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with("state") && n != "state0"
+        })
+        .map(|e| e.path().join("disable"))
+        .filter(|p| p.is_file())
+        .collect();
+    states.sort();
+    states
+}
+
+// One directory per group of cores that share a clock. The H700 has a single one for all four,
+// but nothing here assumes that.
+fn cpufreq_policies(parent: &Path) -> Vec<PathBuf> {
+    let mut policies: Vec<PathBuf> = fs::read_dir(parent)
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    policies.retain(|p| {
+        p.file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("policy"))
+            && p.join("scaling_governor").is_file()
+    });
+    policies.sort();
+    policies
+}
+
 fn is_battery(dir: &Path) -> bool {
     fs::read_to_string(dir.join("type")).is_ok_and(|t| t.trim() == "Battery")
         && dir.join("capacity").is_file()
@@ -559,6 +605,43 @@ impl Platform for DevicePlatform {
                 eprintln!("slot: adb {}: {e}", gadget.display());
                 false
             }
+        }
+    }
+
+    fn set_governor(&mut self, governor: &str) {
+        for policy in &self.cpufreq {
+            let name = policy
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let offered =
+                fs::read_to_string(policy.join("scaling_available_governors")).unwrap_or_default();
+            if !offered.split_whitespace().any(|g| g == governor) {
+                eprintln!(
+                    "slot: cpu {name}: no {governor} governor, keeping the one it has (offers {})",
+                    offered.trim()
+                );
+                continue;
+            }
+            match fs::write(policy.join("scaling_governor"), governor) {
+                Ok(()) => eprintln!("slot: cpu {name}: {governor} governor"),
+                Err(e) => eprintln!("slot: cpu {name}: {governor} governor: {e}"),
+            }
+        }
+        // performance also keeps the cores out of their deep idle states: waking from one costs
+        // the emu thread its frame pacing every time it sleeps out the rest of a frame.
+        let disable = if governor == "performance" { "1" } else { "0" };
+        let refused = self
+            .cpuidle
+            .iter()
+            .filter(|state| fs::write(state, disable).is_err())
+            .count();
+        if !self.cpuidle.is_empty() {
+            eprintln!(
+                "slot: cpu: deep idle {} ({refused} of {} states refused)",
+                if disable == "1" { "off" } else { "on" },
+                self.cpuidle.len()
+            );
         }
     }
 

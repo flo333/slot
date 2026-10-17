@@ -59,6 +59,10 @@ impl Power {
         self.platform.set_rumble(strength);
     }
 
+    pub fn set_governor(&mut self, governor: &str) {
+        self.platform.set_governor(governor);
+    }
+
     pub fn relink_adb(&mut self) -> bool {
         self.platform.relink_adb()
     }

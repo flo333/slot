@@ -662,7 +662,7 @@ fn open_core_reaches_a_gpsp_named_dylib_under_the_content_roots_system_directory
         Core::Gpsp,
         Platform::Gba,
         "auto",
-        "",
+        false,
         false,
         None,
         None,
