@@ -241,7 +241,7 @@ fn mgba_states_repeat_and_load_with_trailing_padding() {
 }
 
 #[test]
-fn run_aheads_save_and_load_every_frame_keeps_each_state_whole() {
+fn saving_and_loading_back_to_back_keeps_each_state_whole() {
     let _g = lock();
     let Some(mut c) = test_core() else { return };
     c.load(&test_rom()).unwrap();
