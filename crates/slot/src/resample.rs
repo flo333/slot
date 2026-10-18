@@ -1,15 +1,25 @@
 const TAPS: usize = 48;
 const HALF: usize = TAPS / 2;
-const PHASES: usize = 256;
+// Nearest phase instead of blending two: 512 steps put the timing error near -56 dB at 15 kHz,
+// under the GBA's own ~9-bit output, at half the work and none of the per-tap blend.
+const PHASES: usize = 512;
 const CUTOFF: f64 = 22_000.0 / 24_000.0;
 const BETA: f64 = 7.0;
+// Independent sums a tap row is split over, so the adds overlap and vectorise.
+const LANES: usize = 8;
+// The read position is fixed point, frames above FRAC_BITS and the fraction below, so stepping and
+// picking a phase stay integer work.
+const FRAC_BITS: u32 = 32;
+const PHASE_SHIFT: u32 = FRAC_BITS - PHASES.trailing_zeros();
 
 pub struct Resampler {
     step: f64,
-    scaled: f64,
-    pos: f64,
-    kernel: Vec<f32>,
-    history: Vec<f32>,
+    scaled: u64,
+    pos: u64,
+    kernel: Vec<[f32; TAPS]>,
+    // Left and right apart, so each output frame is two contiguous dot products.
+    left: Vec<f32>,
+    right: Vec<f32>,
 }
 
 impl Resampler {
@@ -22,16 +32,17 @@ impl Resampler {
         };
         Resampler {
             step,
-            scaled: step,
-            pos: HALF as f64,
+            scaled: fixed(step),
+            pos: (HALF as u64) << FRAC_BITS,
             kernel: kernel(CUTOFF * (1.0 / step).min(1.0)),
-            history: vec![0.0; TAPS * 2],
+            left: vec![0.0; TAPS],
+            right: vec![0.0; TAPS],
         }
     }
 
     pub fn set_ratio(&mut self, ratio: f64) {
         if ratio > 0.0 {
-            self.scaled = self.step / ratio;
+            self.scaled = fixed(self.step / ratio);
         }
     }
 
@@ -40,52 +51,73 @@ impl Resampler {
         if src.len() < 2 {
             return;
         }
-        self.history
-            .extend(src[..src.len() / 2 * 2].iter().map(|&s| f32::from(s)));
-        let frames = self.history.len() / 2;
-        while self.pos + (HALF as f64) < frames as f64 {
-            let i = self.pos as usize;
-            let at = (self.pos - i as f64) * PHASES as f64;
-            let phase = at as usize;
-            let blend = (at - phase as f64) as f32;
-            let a = &self.kernel[phase * TAPS..(phase + 1) * TAPS];
-            let b = &self.kernel[(phase + 1) * TAPS..(phase + 2) * TAPS];
-            let window = &self.history[(i + 1 - HALF) * 2..(i + 1 + HALF) * 2];
-            let (mut l, mut r) = (0.0f32, 0.0f32);
-            for t in 0..TAPS {
-                let w = a[t] + (b[t] - a[t]) * blend;
-                l += window[t * 2] * w;
-                r += window[t * 2 + 1] * w;
-            }
+        let (frames, _) = src.as_chunks::<2>();
+        self.left.extend(frames.iter().map(|f| f32::from(f[0])));
+        self.right.extend(frames.iter().map(|f| f32::from(f[1])));
+        let end = ((self.left.len() - HALF) as u64) << FRAC_BITS;
+        out.reserve((end.saturating_sub(self.pos) / self.scaled) as usize * 2 + 2);
+        while self.pos < end {
+            let i = (self.pos >> FRAC_BITS) as usize;
+            let frac = self.pos & ((1 << FRAC_BITS) - 1);
+            let phase = (frac + (1 << (PHASE_SHIFT - 1))) >> PHASE_SHIFT;
+            let taps = &self.kernel[phase as usize];
+            let start = i + 1 - HALF;
+            let (l, r) = dot(
+                taps,
+                self.left[start..start + TAPS].try_into().unwrap(),
+                self.right[start..start + TAPS].try_into().unwrap(),
+            );
             out.push(l.round().clamp(-32768.0, 32767.0) as i16);
             out.push(r.round().clamp(-32768.0, 32767.0) as i16);
             self.pos += self.scaled;
         }
-        let drop = self.pos as usize + 1 - HALF;
-        self.history.drain(..drop * 2);
-        self.pos -= drop as f64;
+        let drop = (self.pos >> FRAC_BITS) as usize + 1 - HALF;
+        self.left.drain(..drop);
+        self.right.drain(..drop);
+        self.pos -= (drop as u64) << FRAC_BITS;
     }
 }
 
-fn kernel(cutoff: f64) -> Vec<f32> {
-    let mut k = vec![0.0f32; (PHASES + 1) * TAPS];
-    for phase in 0..=PHASES {
-        let frac = phase as f64 / PHASES as f64;
-        let row = &mut k[phase * TAPS..(phase + 1) * TAPS];
-        let mut sum = 0.0;
-        let mut taps = [0.0f64; TAPS];
-        for (t, tap) in taps.iter_mut().enumerate() {
-            let x = t as f64 + 1.0 - HALF as f64 - frac;
-            let window = bessel_i0(BETA * (1.0 - (x / HALF as f64).powi(2)).max(0.0).sqrt())
-                / bessel_i0(BETA);
-            *tap = cutoff * sinc(cutoff * x) * window;
-            sum += *tap;
-        }
-        for (dst, tap) in row.iter_mut().zip(taps) {
-            *dst = (tap / sum) as f32;
+fn fixed(step: f64) -> u64 {
+    ((step * (1u64 << FRAC_BITS) as f64).round() as u64).max(1)
+}
+
+fn dot(taps: &[f32; TAPS], left: &[f32; TAPS], right: &[f32; TAPS]) -> (f32, f32) {
+    let (mut l, mut r) = ([0.0f32; LANES], [0.0f32; LANES]);
+    let (t, a, b) = (
+        taps.as_chunks::<LANES>().0,
+        left.as_chunks::<LANES>().0,
+        right.as_chunks::<LANES>().0,
+    );
+    for ((t, a), b) in t.iter().zip(a).zip(b) {
+        for k in 0..LANES {
+            l[k] += t[k] * a[k];
+            r[k] += t[k] * b[k];
         }
     }
-    k
+    (reduce(l), reduce(r))
+}
+
+fn reduce(sums: [f32; LANES]) -> f32 {
+    let quads = [0, 1, 2, 3].map(|k| sums[k] + sums[k + 4]);
+    (quads[0] + quads[2]) + (quads[1] + quads[3])
+}
+
+fn kernel(cutoff: f64) -> Vec<[f32; TAPS]> {
+    (0..=PHASES)
+        .map(|phase| {
+            let frac = phase as f64 / PHASES as f64;
+            let mut taps = [0.0f64; TAPS];
+            for (t, tap) in taps.iter_mut().enumerate() {
+                let x = t as f64 + 1.0 - HALF as f64 - frac;
+                let window = bessel_i0(BETA * (1.0 - (x / HALF as f64).powi(2)).max(0.0).sqrt())
+                    / bessel_i0(BETA);
+                *tap = cutoff * sinc(cutoff * x) * window;
+            }
+            let sum: f64 = taps.iter().sum();
+            taps.map(|tap| (tap / sum) as f32)
+        })
+        .collect()
 }
 
 fn sinc(x: f64) -> f64 {
